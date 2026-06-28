@@ -44,11 +44,13 @@ where
     let mut entries = Vec::with_capacity(payload_paths.len());
 
     for payload_path in payload_paths {
+        let payload_path = Path::new(payload_path);
         let offset = output.stream_position()?;
         let mut payload = File::open(payload_path)?;
         let size = io::copy(&mut payload, &mut output)?;
+        let name = payload_path.file_name().and_then(|name| name.to_str()).ok_or_else(|| Error::new(ErrorKind::InvalidInput, "payload path has no valid file name"))?.to_string();
 
-        entries.push(Entry { name: payload_path.clone(), offset, size });
+        entries.push(Entry { name, offset, size });
     }
 
     // The manifest is appended after the launcher + payload blobs.
@@ -74,7 +76,10 @@ where
 }
 
 /// Read the packed file footer, locate the best matching payload, and extract it.
-pub fn read_back(path: &str) -> io::Result<()> {
+pub fn read_back<P>(path: P) -> io::Result<Vec<u8>>
+where
+    P: AsRef<Path>,
+{
     let mut file = OpenOptions::new().read(true).open(path)?;
 
     let file_size = file.metadata()?.len();
@@ -136,13 +141,9 @@ pub fn read_back(path: &str) -> io::Result<()> {
     file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut correct_exe)?;
 
-    let mut elf = OpenOptions::new().create(true).truncate(true).write(true).open("program output")?;
-    elf.write_all(&correct_exe)?;
-
-    Ok(())
+    Ok(correct_exe)
 }
 
-/// Pick the payload that best matches the CPU's supported x86-64 level.
 /// Pick the payload that best matches the CPU's supported x86-64 level.
 fn find_optimal(entries: &[Entry]) -> io::Result<(u64, u64)> {
     let level = detect_x86_level();
@@ -153,9 +154,15 @@ fn find_optimal(entries: &[Entry]) -> io::Result<(u64, u64)> {
         X86Level::V2 => "x86-64-v2",
         X86Level::X86_64 => "x86-64",
     };
+    let wanted_with_underscores = wanted.replace('-', "_");
 
     for entry in entries {
-        if entry.name == wanted || entry.name == format!("-march={wanted}") {
+        if entry.name == wanted
+            || entry.name.ends_with(wanted)
+            || entry.name == wanted_with_underscores
+            || entry.name.ends_with(&wanted_with_underscores)
+            || entry.name == format!("-march={wanted}")
+        {
             return Ok((entry.offset, entry.size));
         }
     }
@@ -163,7 +170,10 @@ fn find_optimal(entries: &[Entry]) -> io::Result<(u64, u64)> {
     Err(io::Error::new(io::ErrorKind::NotFound, "no compatible binary found"))
 }
 
-pub fn is_archive(path: &str) -> io::Result<bool> {
+pub fn is_archive<P>(path: P) -> io::Result<bool>
+where
+    P: AsRef<Path>,
+{
     let mut file = OpenOptions::new().read(true).open(path)?;
 
     let file_size = file.metadata()?.len();

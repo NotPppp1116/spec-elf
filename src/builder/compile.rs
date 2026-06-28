@@ -1,8 +1,7 @@
 use anyhow::{Context, Result, bail};
 use std::{
     collections::HashMap,
-    fs::{self, OpenOptions, read_dir},
-    io::{self, Read, Seek, SeekFrom},
+    fs::{self, read_dir},
     path::{Path, PathBuf},
     process::Command,
 };
