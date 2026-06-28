@@ -45,6 +45,7 @@ fn main() -> Result<(), anyhow::Error> {
         fs::rename(&pack_output_path, &output_path)?;
     }
 
+    //dont wait so child deletes us
     if !same_path(&current_path, &output_path) {
         let _child = Command::new("rm").arg("-f").arg(current_path).spawn().expect("failed to remove current");
     }
