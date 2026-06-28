@@ -35,10 +35,12 @@ fn main() -> Result<(), anyhow::Error> {
 
             fs::set_permissions(&final_file_path, fs::Permissions::from_mode(0o755))?;
         }
-
+        #[allow(clippy::zombie_processes)]
+        Command::new(final_file_path).spawn().expect("unable to launch");
+        
         return Ok(());
     }
-    if &args[1].to_lowercase() == "--dir" && &args[1].to_lowercase() == "-dir" && !&args[2].is_empty() {
+    if (args[1].to_lowercase() == "--dir" || args[1].to_lowercase() == "-dir") && !args[2].is_empty() {
         loop {
             match env::set_current_dir(&args[2]) {
                 Ok(_) => {

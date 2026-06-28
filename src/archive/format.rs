@@ -7,7 +7,7 @@ use std::{
 
 const FOOTER_MAGIC: &[u8; 8] = b"VPKFOOT\0";
 const FOOTER_SIZE: u64 = 25;
-const IS_LAUNCHED: u8 = 0;
+const IS_LAUNCHED: u8 = 1;
 
 /// A single packed payload entry stored in the manifest.
 struct Entry {
@@ -70,6 +70,7 @@ where
     output.write_all(&manifest_offset.to_le_bytes())?;
     output.write_all(&manifest_size.to_le_bytes())?;
     // Reserved flag for launch bookkeeping.
+    // is launched needs to be 1
     output.write_all(&[IS_LAUNCHED])?;
 
     Ok(())
