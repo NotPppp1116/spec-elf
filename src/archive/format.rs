@@ -5,11 +5,28 @@ use std::{
     path::Path,
 };
 
+/// Magic bytes stored at the start of the footer.
+///
+/// Because the footer is written last, this lets the launcher quickly check
+/// whether the current executable is a packed spec-elf archive.
 const FOOTER_MAGIC: &[u8; 8] = b"VPKFOOT\0";
+
+/// Fixed footer size in bytes:
+///
+/// - 8 bytes magic
+/// - 8 bytes manifest offset
+/// - 8 bytes manifest size
+/// - 8 bytes native CPU hash
+/// - 1 byte launch flag
 const FOOTER_SIZE: u64 = 33;
-const IS_LAUNCHED: u8 = 1; // use to be written in the launcher, must be 1
+
+/// Footer flag that marks the file as a launchable archive.
+const IS_LAUNCHED: u8 = 1;
 
 /// A single packed payload entry stored in the manifest.
+///
+/// `offset` and `size` describe the byte range of one compiled executable
+/// inside the packed launcher file.
 struct Entry {
     name: String,
     offset: u64,
@@ -30,7 +47,11 @@ fn read_u64(file: &mut File) -> io::Result<u64> {
     Ok(u64::from_le_bytes(buf))
 }
 
-/// Build a packed executable by appending payloads and a manifest footer.
+/// Build a packed executable by appending payloads, a manifest, and a footer.
+///
+/// The resulting file still starts with the original launcher bytes, so the OS
+/// can execute it normally. Everything after the launcher is data that the
+/// launcher reads back from its own executable at runtime.
 pub fn pack_files<P, O>(launcher_path: P, output_path: O, payload_paths: &[String]) -> io::Result<()>
 where
     P: AsRef<Path>,
@@ -38,6 +59,8 @@ where
 {
     let mut output = OpenOptions::new().create(true).truncate(true).write(true).open(output_path)?;
 
+    // Copy the launcher first. This preserves a valid executable header at the
+    // beginning of the packed file.
     let mut launcher = File::open(launcher_path)?;
     io::copy(&mut launcher, &mut output)?;
 
@@ -45,6 +68,9 @@ where
 
     for payload_path in payload_paths {
         let payload_path = Path::new(payload_path);
+
+        // The current output position is the start of this payload inside the
+        // final packed file. The manifest stores this absolute offset.
         let offset = output.stream_position()?;
         let mut payload = File::open(payload_path).map_err(|err| Error::new(err.kind(), format!("failed to open payload {}: {err}", payload_path.display())))?;
         let size = io::copy(&mut payload, &mut output)?;
@@ -53,7 +79,8 @@ where
         entries.push(Entry { name, offset, size });
     }
 
-    // The manifest is appended after the launcher + payload blobs.
+    // The manifest is appended after the launcher and all payload blobs. It is
+    // read from the offset stored in the footer.
     let manifest_offset = output.stream_position()?;
     output.write_all(&(entries.len() as u32).to_le_bytes())?;
 
@@ -66,6 +93,9 @@ where
     }
 
     let manifest_size = output.stream_position()? - manifest_offset;
+
+    // The footer is fixed-size and always last, which lets the reader locate it
+    // with one seek from the end of the file.
     output.write_all(FOOTER_MAGIC)?;
     output.write_all(&manifest_offset.to_le_bytes())?;
     output.write_all(&manifest_size.to_le_bytes())?;
@@ -74,17 +104,15 @@ where
 
     match native_hash {
         Some(v) => output.write_all(&v.to_le_bytes())?,
-        None => output.write_all(&((0 as u64).to_le_bytes()))?,
+        None => output.write_all(&0u64.to_le_bytes())?,
     }
 
-    // Reserved flag for launch bookkeeping.
-    // is launched needs to be 1
     output.write_all(&[IS_LAUNCHED])?;
 
     Ok(())
 }
 
-/// Read the packed file footer, locate the best matching payload, and return it
+/// Read the packed file footer, locate the best matching payload, and return it.
 pub fn read_back<P>(path: P) -> io::Result<Vec<u8>>
 where
     P: AsRef<Path>,
@@ -135,6 +163,7 @@ where
         entries.push(Entry { name, offset, size });
     }
 
+    // The native hash is the 8-byte field before the final launch flag.
     file.seek(SeekFrom::End(-9))?;
     let mut native_hash = [0u8; 8];
     file.read_exact(&mut native_hash)?;
@@ -149,13 +178,14 @@ where
     Ok(correct_exe)
 }
 
-/// Pick the payload that best matches the CPU's supported x86-64 level.
+/// Pick the payload that best matches the current machine.
 fn find_optimal(entries: &[Entry], native_hash: &[u8]) -> io::Result<(u64, u64)> {
     let level = detect_x86_level();
 
-    // if the hashes are equal we itenerate and see if one contains native as part of name, if yes we return the offset and size if this is not true we just continue default path
+    // Prefer the `native` build only when the CPU/platform hash written during
+    // packing matches the current machine. Otherwise, fall back to the portable
+    // x86-64 level names.
     if let Some(b) = native_hasher() {
-        //return the native as a choice
         if b.to_le_bytes() == native_hash {
             for entry in entries {
                 if entry.name.contains("native") {
@@ -182,6 +212,7 @@ fn find_optimal(entries: &[Entry], native_hash: &[u8]) -> io::Result<(u64, u64)>
     Err(io::Error::new(io::ErrorKind::NotFound, "no compatible binary found"))
 }
 
+/// Return whether a file looks like a launchable spec-elf archive.
 pub fn is_archive<P>(path: P) -> io::Result<bool>
 where
     P: AsRef<Path>,
@@ -199,20 +230,21 @@ where
     let mut identifier = [0u8; 8];
     file.read_exact(&mut identifier)?;
 
-    //check the last byte bcs it is a u8 FOOTER_IS_LAUNCHED
+    // A matching magic value means the footer is present. The final byte is a
+    // separate launch flag so future format versions can distinguish packed
+    // data from a runnable launcher archive.
     if &identifier == FOOTER_MAGIC {
         file.seek(SeekFrom::End(-1))?;
         let mut is_launched = [0u8; 1];
         file.read_exact(&mut is_launched)?;
 
-        if is_launched[0] == 1 {
+        if is_launched[0] == IS_LAUNCHED {
             return Ok(true);
         }
     }
 
     Ok(false)
 }
-
 
 #[cfg(test)]
 mod tests {
