@@ -7,7 +7,7 @@ use std::{
 
 const FOOTER_MAGIC: &[u8; 8] = b"VPKFOOT\0";
 const FOOTER_SIZE: u64 = 25;
-const IS_LAUNCHED: u8 = 1;
+const IS_LAUNCHED: u8 = 1;// use to be written in the launcher, must be 1 
 
 /// A single packed payload entry stored in the manifest.
 struct Entry {

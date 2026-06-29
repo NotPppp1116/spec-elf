@@ -8,6 +8,11 @@ use std::{self, env, fs, path::Path};
 mod arch;
 mod archive;
 mod builder;
+#[derive(PartialEq)]
+enum Args {
+    No,
+    Yes,
+}
 
 fn help() -> ! {
     println!("you can run spec-elf with no args if you run directly on target dir or you can use the argumment --dir or -dir followed by the target dir");
@@ -16,10 +21,16 @@ fn help() -> ! {
 fn main() -> Result<(), anyhow::Error> {
     let args: Vec<String> = env::args().collect();
 
-    if !args.is_empty() && (args[1].to_lowercase() == "--help" || args[1].to_lowercase() == "-help" || args[1].to_lowercase() == "-h" || args[1].to_lowercase() == "--h"){
-        help();
+    // marker for arss
+    let mut has_args = Args::No;
+    if args.len() > 2 {
+        //it has argss
+        has_args = Args::Yes;
+        if (args[1].to_lowercase() == "--help" || args.get(1).to_lowercase() == "-help" || args[1].to_lowercase() == "-h" || args[1].to_lowercase() == "--h") {
+            help();
+        }
     }
-    
+
     let current_path = env::current_exe()?;
     let current_name = current_path.file_name().expect("current executable has no file name");
 
@@ -37,27 +48,29 @@ fn main() -> Result<(), anyhow::Error> {
         }
         #[allow(clippy::zombie_processes)]
         Command::new(final_file_path).spawn().expect("unable to launch");
-        
+
         return Ok(());
     }
-    if (args[1].to_lowercase() == "--dir" || args[1].to_lowercase() == "-dir") && !args[2].is_empty() {
-        loop {
-            match env::set_current_dir(&args[2]) {
-                Ok(_) => {
-                    break;
+    if has_args == Args::Yes {
+        if (args[1].to_lowercase() == "--dir" || args[1].to_lowercase() == "-dir") && !args[2].is_empty() {
+            loop {
+                match env::set_current_dir(&args[2]) {
+                    Ok(_) => {
+                        break;
+                    }
+                    Err(e) => match e.kind() {
+                        ErrorKind::NotFound => {
+                            println!("directory not found");
+                        }
+                        ErrorKind::PermissionDenied => {
+                            println!("wrong permissions");
+                        }
+                        ErrorKind::NotADirectory => {
+                            println!("this is not a dir");
+                        }
+                        _ => println!("idk this error"),
+                    },
                 }
-                Err(e) => match e.kind() {
-                    ErrorKind::NotFound => {
-                        println!("directory not found");
-                    }
-                    ErrorKind::PermissionDenied => {
-                        println!("wrong permissions");
-                    }
-                    ErrorKind::NotADirectory => {
-                        println!("this is not a dir");
-                    }
-                    _ => println!("idk this error"),
-                },
             }
         }
     }
