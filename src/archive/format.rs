@@ -1,4 +1,4 @@
-use crate::arch::x86::{X86Level, detect_x86_level};
+use crate::arch::x86::{X86Level, detect_x86_level, native_hasher};
 use std::{
     fs::{File, OpenOptions},
     io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write},
@@ -6,8 +6,8 @@ use std::{
 };
 
 const FOOTER_MAGIC: &[u8; 8] = b"VPKFOOT\0";
-const FOOTER_SIZE: u64 = 25;
-const IS_LAUNCHED: u8 = 1;// use to be written in the launcher, must be 1 
+const FOOTER_SIZE: u64 = 33;
+const IS_LAUNCHED: u8 = 1; // use to be written in the launcher, must be 1
 
 /// A single packed payload entry stored in the manifest.
 struct Entry {
@@ -46,7 +46,7 @@ where
     for payload_path in payload_paths {
         let payload_path = Path::new(payload_path);
         let offset = output.stream_position()?;
-        let mut payload = File::open(payload_path)?;
+        let mut payload = File::open(payload_path).map_err(|err| Error::new(err.kind(), format!("failed to open payload {}: {err}", payload_path.display())))?;
         let size = io::copy(&mut payload, &mut output)?;
         let name = payload_path.file_name().and_then(|name| name.to_str()).ok_or_else(|| Error::new(ErrorKind::InvalidInput, "payload path has no valid file name"))?.to_string();
 
@@ -69,6 +69,14 @@ where
     output.write_all(FOOTER_MAGIC)?;
     output.write_all(&manifest_offset.to_le_bytes())?;
     output.write_all(&manifest_size.to_le_bytes())?;
+
+    let native_hash = native_hasher();
+
+    match native_hash {
+        Some(v) => output.write_all(&v.to_le_bytes())?,
+        None => output.write_all(&((0 as u64).to_le_bytes()))?,
+    }
+
     // Reserved flag for launch bookkeeping.
     // is launched needs to be 1
     output.write_all(&[IS_LAUNCHED])?;
@@ -98,18 +106,9 @@ where
         return Err(Error::new(ErrorKind::InvalidData, "invalid footer magic"));
     }
 
-    // Footer layout: magic, manifest offset, manifest size, launch flag.
+    // Footer layout: magic, manifest offset, manifest size, native hash, launch flag.
     let manifest_offset = read_u64(&mut file)?;
     let manifest_size = read_u64(&mut file)?;
-
-    let mut launched = [0u8; 1];
-    file.read_exact(&mut launched)?;
-
-    if launched[0] == 1 {
-        println!("already launched");
-    } else {
-        println!("not launched yet");
-    }
 
     if manifest_offset + manifest_size > file_size - FOOTER_SIZE {
         return Err(Error::new(ErrorKind::InvalidData, "invalid manifest range"));
@@ -135,7 +134,12 @@ where
 
         entries.push(Entry { name, offset, size });
     }
-    let (offset, size) = find_optimal(&entries)?;
+
+    file.seek(SeekFrom::End(-9))?;
+    let mut native_hash = [0u8; 8];
+    file.read_exact(&mut native_hash)?;
+
+    let (offset, size) = find_optimal(&entries, &native_hash)?;
 
     let mut correct_exe = vec![0u8; size as usize];
 
@@ -146,8 +150,20 @@ where
 }
 
 /// Pick the payload that best matches the CPU's supported x86-64 level.
-fn find_optimal(entries: &[Entry]) -> io::Result<(u64, u64)> {
+fn find_optimal(entries: &[Entry], native_hash: &[u8]) -> io::Result<(u64, u64)> {
     let level = detect_x86_level();
+
+    // if the hashes are equal we itenerate and see if one contains native as part of name, if yes we return the offset and size if this is not true we just continue default path
+    if let Some(b) = native_hasher() {
+        //return the native as a choice
+        if b.to_le_bytes() == native_hash {
+            for entry in entries {
+                if entry.name.contains("native") {
+                    return Ok((entry.offset, entry.size));
+                }
+            }
+        }
+    }
 
     let wanted = match level {
         X86Level::V4 => "x86-64-v4",
@@ -183,17 +199,15 @@ where
     let mut identifier = [0u8; 8];
     file.read_exact(&mut identifier)?;
 
-
     //check the last byte bcs it is a u8 FOOTER_IS_LAUNCHED
     if &identifier == FOOTER_MAGIC {
         file.seek(SeekFrom::End(-1))?;
         let mut is_launched = [0u8; 1];
         file.read_exact(&mut is_launched)?;
 
-        if is_launched[0] == 1{
+        if is_launched[0] == 1 {
             return Ok(true);
         }
-
     }
 
     Ok(false)

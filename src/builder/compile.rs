@@ -91,23 +91,71 @@ fn compile_c(path: &str) -> Result<Vec<String>> {
         bail!("no C source files found");
     }
 
+    let has_cmake = project_dir.join("CMakeLists.txt").exists();
+
     let mut outputs = Vec::with_capacity(MARCH_FLAGS.len());
 
     for march in MARCH_FLAGS {
         let march_name = march.trim_start_matches("-march=");
         let output = build_dir.join(format!("c-{march_name}"));
 
-        let mut command = Command::new("gcc");
-        command.arg("-O3").arg(march).arg("-I").arg("-Iinclude").arg("-Isrc");
+        if has_cmake {
+            let cmake_build_dir = build_dir.join(format!("cmake-{march_name}"));
+            let cmake_output_dir = build_dir.join(format!("cmake-c-out-{march_name}"));
 
-        for source in &sources {
-            command.arg(source);
-        }
+            fs::create_dir_all(&cmake_output_dir)?;
 
-        let status = command.arg("-o").arg(&output).current_dir(&project_dir).status().with_context(|| format!("could not run gcc for {march_name}"))?;
+            let status = Command::new("cmake")
+                .arg("-S")
+                .arg(&project_dir)
+                .arg("-B")
+                .arg(&cmake_build_dir)
+                .arg("-DCMAKE_BUILD_TYPE=Release")
+                .arg(format!("-DCMAKE_C_FLAGS_RELEASE=-O3 {march}"))
+                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}", cmake_output_dir.display()))
+                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={}", cmake_output_dir.display()))
+                .current_dir(&project_dir)
+                .status()
+                .with_context(|| format!("could not configure cmake for {march_name}"))?;
 
-        if !status.success() {
-            bail!("gcc failed for {march_name} with status {status}");
+            if !status.success() {
+                bail!("cmake configure failed for {march_name} with status {status}");
+            }
+
+            let status = Command::new("cmake").arg("--build").arg(&cmake_build_dir).arg("--config").arg("Release").current_dir(&project_dir).status().with_context(|| format!("could not build cmake project for {march_name}"))?;
+
+            if !status.success() {
+                bail!("cmake build failed for {march_name} with status {status}");
+            }
+
+            let built_exe = find_single_executable(&cmake_output_dir).with_context(|| format!("could not find cmake executable for {march_name}"))?;
+
+            if output.exists() {
+                fs::remove_file(&output)?;
+            }
+
+            fs::copy(&built_exe, &output)?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                fs::set_permissions(&output, fs::Permissions::from_mode(0o755))?;
+            }
+        } else {
+            let mut command = Command::new("gcc");
+
+            command.arg("-O3").arg(march).arg("-Iinclude").arg("-Isrc");
+
+            for source in &sources {
+                command.arg(source);
+            }
+
+            let status = command.arg("-o").arg(&output).current_dir(&project_dir).status().with_context(|| format!("could not run gcc for {march_name}"))?;
+
+            if !status.success() {
+                bail!("gcc failed for {march_name} with status {status}");
+            }
         }
 
         outputs.push(output.display().to_string());
@@ -115,7 +163,6 @@ fn compile_c(path: &str) -> Result<Vec<String>> {
 
     Ok(outputs)
 }
-
 fn compile_cpp(path: &str) -> Result<Vec<String>> {
     let project_dir = project_dir_from_path(path)?;
     let build_dir = project_dir.join("build");
@@ -127,23 +174,71 @@ fn compile_cpp(path: &str) -> Result<Vec<String>> {
         bail!("no C++ source files found");
     }
 
+    let has_cmake = project_dir.join("CMakeLists.txt").is_file();
+
     let mut outputs = Vec::with_capacity(MARCH_FLAGS.len());
 
     for march in MARCH_FLAGS {
         let march_name = march.trim_start_matches("-march=");
         let output = build_dir.join(format!("cpp-{march_name}"));
 
-        let mut command = Command::new("g++");
-        command.arg("-O3").arg(march).arg("-Iinclude");
+        if has_cmake {
+            let cmake_build_dir = build_dir.join(format!("cmake-cpp-{march_name}"));
+            let cmake_output_dir = build_dir.join(format!("cmake-cpp-out-{march_name}"));
 
-        for source in &sources {
-            command.arg(source);
-        }
+            fs::create_dir_all(&cmake_output_dir)?;
 
-        let status = command.arg("-o").arg(&output).current_dir(&project_dir).status().with_context(|| format!("could not run g++ for {march_name}"))?;
+            let status = Command::new("cmake")
+                .arg("-S")
+                .arg(&project_dir)
+                .arg("-B")
+                .arg(&cmake_build_dir)
+                .arg("-DCMAKE_BUILD_TYPE=Release")
+                .arg(format!("-DCMAKE_CXX_FLAGS_RELEASE=-O3 {march}"))
+                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}", cmake_output_dir.display()))
+                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={}", cmake_output_dir.display()))
+                .current_dir(&project_dir)
+                .status()
+                .with_context(|| format!("could not configure cmake for {march_name}"))?;
 
-        if !status.success() {
-            bail!("g++ failed for {march_name} with status {status}");
+            if !status.success() {
+                bail!("cmake configure failed for {march_name} with status {status}");
+            }
+
+            let status = Command::new("cmake").arg("--build").arg(&cmake_build_dir).arg("--config").arg("Release").current_dir(&project_dir).status().with_context(|| format!("could not build cmake project for {march_name}"))?;
+
+            if !status.success() {
+                bail!("cmake build failed for {march_name} with status {status}");
+            }
+
+            let built_exe = find_single_executable(&cmake_output_dir).with_context(|| format!("could not find cmake executable for {march_name}"))?;
+
+            if output.exists() {
+                fs::remove_file(&output)?;
+            }
+
+            fs::copy(&built_exe, &output)?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                fs::set_permissions(&output, fs::Permissions::from_mode(0o755))?;
+            }
+        } else {
+            let mut command = Command::new("g++");
+
+            command.arg("-O3").arg(march).arg("-I.").arg("-Iinclude").arg("-Isrc");
+
+            for source in &sources {
+                command.arg(source);
+            }
+
+            let status = command.arg("-o").arg(&output).current_dir(&project_dir).status().with_context(|| format!("could not run g++ for {march_name}"))?;
+
+            if !status.success() {
+                bail!("g++ failed for {march_name} with status {status}");
+            }
         }
 
         outputs.push(output.display().to_string());
@@ -284,6 +379,37 @@ fn collect_sources_recursive(dir: &Path, extensions: &[&str], sources: &mut Vec<
     }
 
     Ok(())
+}
+
+fn find_single_executable(dir: &Path) -> Result<PathBuf> {
+    let mut built_exe = None;
+
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = path.metadata()?.permissions().mode();
+
+            if mode & 0o111 == 0 {
+                continue;
+            }
+        }
+
+        if built_exe.is_some() {
+            bail!("cmake produced multiple executables in {}", dir.display());
+        }
+
+        built_exe = Some(path);
+    }
+
+    built_exe.with_context(|| format!("cmake produced no executable in {}", dir.display()))
 }
 
 fn find_first_source(project_dir: &Path, extensions: &[&str]) -> Result<PathBuf> {

@@ -1,8 +1,7 @@
 use crate::archive::format::{is_archive, pack_files, read_back};
 use crate::builder::compile::compile_lang;
 use std::io::ErrorKind;
-use std::os::unix::process;
-use std::process::{Command, ExitCode, ExitStatus};
+use std::process::Command;
 use std::{self, env, fs, path::Path};
 
 mod arch;
@@ -15,7 +14,7 @@ enum Args {
 }
 
 fn help() -> ! {
-    println!("you can run spec-elf with no args if you run directly on target dir or you can use the argumment --dir or -dir followed by the target dir");
+    println!("you can run spec-elf with no arguments if you run directly on target dir or you can use the argumment --dir or -dir followed by the target dir");
     std::process::exit(0);
 }
 fn main() -> Result<(), anyhow::Error> {
@@ -26,7 +25,7 @@ fn main() -> Result<(), anyhow::Error> {
     if args.len() > 2 {
         //it has argss
         has_args = Args::Yes;
-        if (args[1].to_lowercase() == "--help" || args.get(1).to_lowercase() == "-help" || args[1].to_lowercase() == "-h" || args[1].to_lowercase() == "--h") {
+        if args[1].to_lowercase() == "--help" || args[1].to_lowercase() == "-help" || args[1].to_lowercase() == "-h" || args[1].to_lowercase() == "--h" {
             help();
         }
     }
@@ -47,30 +46,28 @@ fn main() -> Result<(), anyhow::Error> {
             fs::set_permissions(&final_file_path, fs::Permissions::from_mode(0o755))?;
         }
         #[allow(clippy::zombie_processes)]
-        Command::new(final_file_path).spawn().expect("unable to launch");
+        Command::new(final_file_path).spawn()?;
 
         return Ok(());
     }
-    if has_args == Args::Yes {
-        if (args[1].to_lowercase() == "--dir" || args[1].to_lowercase() == "-dir") && !args[2].is_empty() {
-            loop {
-                match env::set_current_dir(&args[2]) {
-                    Ok(_) => {
-                        break;
-                    }
-                    Err(e) => match e.kind() {
-                        ErrorKind::NotFound => {
-                            println!("directory not found");
-                        }
-                        ErrorKind::PermissionDenied => {
-                            println!("wrong permissions");
-                        }
-                        ErrorKind::NotADirectory => {
-                            println!("this is not a dir");
-                        }
-                        _ => println!("idk this error"),
-                    },
+    if has_args == Args::Yes && (args[1].to_lowercase() == "--dir" || args[1].to_lowercase() == "-dir") && !args[2].is_empty() {
+        loop {
+            match env::set_current_dir(&args[2]) {
+                Ok(_) => {
+                    break;
                 }
+                Err(e) => match e.kind() {
+                    ErrorKind::NotFound => {
+                        println!("directory not found");
+                    }
+                    ErrorKind::PermissionDenied => {
+                        println!("wrong permissions");
+                    }
+                    ErrorKind::NotADirectory => {
+                        println!("this is not a dir");
+                    }
+                    _ => println!("idk this error"),
+                },
             }
         }
     }
@@ -87,14 +84,14 @@ fn main() -> Result<(), anyhow::Error> {
         fs::rename(&pack_output_path, &output_path)?;
     }
 
-    //dont wait so child deletes us
-    #[allow(clippy::zombie_processes)]
-    if !same_path(&current_path, &output_path) {
-        let _child = Command::new("rm").arg("-f").arg(current_path).spawn().expect("failed to remove current");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(&output_path, fs::Permissions::from_mode(0o755))?;
     }
 
     Ok(())
-    //exit program, child starts and deletes us
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
