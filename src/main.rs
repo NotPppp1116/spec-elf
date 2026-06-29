@@ -14,9 +14,28 @@ enum Args {
     Yes,
 }
 
+fn usage() -> &'static str {
+    "usage: spec-elf [--dir <target-dir>]\n\nRun with no arguments from the target project directory, or pass --dir followed by the target project directory."
+}
+
 fn help() -> ! {
-    println!("usage: spec-elf [--dir <target-dir>]\n\nRun with no arguments from the target project directory, or pass --dir followed by the target project directory.");
+    println!("{}", usage());
     std::process::exit(0);
+}
+
+fn usage_error(message: &str) -> ! {
+    eprintln!("error: {message}\n\n{}", usage());
+    std::process::exit(2);
+}
+
+fn is_help_flag(arg: &str) -> bool {
+    let arg = arg.to_ascii_lowercase();
+    matches!(arg.as_str(), "--help" | "-help" | "-h" | "--h")
+}
+
+fn is_dir_flag(arg: &str) -> bool {
+    let arg = arg.to_ascii_lowercase();
+    matches!(arg.as_str(), "--dir" | "-dir")
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -24,9 +43,18 @@ fn main() -> Result<(), anyhow::Error> {
 
     let has_args = if args.len() > 1 { Args::Yes } else { Args::No };
 
-    if args.get(1).is_some_and(|arg| matches!(arg.to_lowercase().as_str(), "--help" | "-help" | "-h" | "--h")) {
-        help();
-    }
+    // Accept only the supported invocation shapes here. Unknown arguments must
+    // stop before the build path, otherwise a typo like `spec-elf foo` would
+    // accidentally build the current directory.
+    let target_dir = match args.as_slice() {
+        [_program] => None,
+        [_program, flag] if is_help_flag(flag) => help(),
+        [_program, flag, dir] if is_dir_flag(flag) && !dir.is_empty() => Some(dir.as_str()),
+        [_program, flag] if is_dir_flag(flag) => usage_error("--dir requires a target directory"),
+        [_program, flag, _dir] if is_dir_flag(flag) => usage_error("--dir requires exactly one target directory"),
+        [_program, flag, ..] if is_help_flag(flag) => usage_error("help flags do not take extra arguments"),
+        _ => usage_error("invalid arguments"),
+    };
 
     let current_path = env::current_exe()?;
     let current_name = current_path.file_name().expect("current executable has no file name");
@@ -55,11 +83,9 @@ fn main() -> Result<(), anyhow::Error> {
 
     // In build mode, --dir changes the target project directory before
     // language detection and compilation start.
-    let wants_dir = args.get(1).is_some_and(|arg| matches!(arg.to_lowercase().as_str(), "--dir" | "-dir"));
-
-    if has_args == Args::Yes && wants_dir {
-        let Some(target_dir) = args.get(2).filter(|dir| !dir.is_empty()) else {
-            help();
+    if has_args == Args::Yes {
+        let Some(target_dir) = target_dir else {
+            usage_error("invalid arguments");
         };
 
         match env::set_current_dir(target_dir) {
