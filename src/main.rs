@@ -126,9 +126,21 @@ fn main() -> Result<(), anyhow::Error> {
     pack_files(&current_path, &pack_output_path, &dst)?;
 
     if pack_output_path != output_path {
-        fs::rename(&pack_output_path, &output_path)?;
+        let parent = output_path.parent().expect("couldnt catch parent");
+    
+        let new_name = output_path
+            .file_name()
+            .expect("filename")
+            .to_str()
+            .unwrap();
+    
+        let mut new_name = new_name.to_string();
+        new_name.push_str(".spec-elf");
+    
+        let np = parent.join(new_name);
+    
+        fs::rename(&pack_output_path, &np)?;
     }
-
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
