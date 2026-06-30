@@ -5,6 +5,23 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Levels: u8 {
+        const V1     = 1 << 0;
+        const V2     = 1 << 1;
+        const V3     = 1 << 2;
+        const V4     = 1 << 3;
+        const NATIVE = 1 << 4;
+    }
+}
+const C_LEVELS: [(Levels, &str); 5] = [
+    (Levels::NATIVE, "-march=native"),
+    (Levels::V1, "-march=x86-64"),
+    (Levels::V2, "-march=x86-64-v2"),
+    (Levels::V3, "-march=x86-64-v3"),
+    (Levels::V4, "-march=x86-64-v4"),
+];
 
 pub const MARCH_FLAGS: [&str; 5] = [
     "-march=native",
@@ -38,11 +55,11 @@ enum Idiomes {
     Zig,
 }
 
-pub fn compile_lang(path: &str) -> Result<Vec<String>> {
+pub fn compile_lang(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     let idiome = find_idiome(path)?;
 
     match idiome {
-        Idiomes::C => compile_c(path),
+        Idiomes::C => compile_c(path, flags),
         Idiomes::Cpp => compile_cpp(path),
         Idiomes::Rust => compile_rust(path),
         Idiomes::Zig => compile_zig(path),
@@ -102,7 +119,7 @@ fn count_languages_recursive(dir: &Path, counts: &mut HashMap<Idiomes, usize>) -
     Ok(())
 }
 
-fn compile_c(path: &str) -> Result<Vec<String>> {
+fn compile_c(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     let project_dir = project_dir_from_path(path)?;
     let build_dir = project_dir.join("build");
     fs::create_dir_all(&build_dir)?;
@@ -115,9 +132,31 @@ fn compile_c(path: &str) -> Result<Vec<String>> {
 
     let has_cmake = project_dir.join("CMakeLists.txt").exists();
 
-    let mut outputs = Vec::with_capacity(MARCH_FLAGS.len());
+    let marches: Vec<&str> = match flags {
+        Some(flags) => C_LEVELS
+            .iter()
+            .filter_map(|(level, march)| {
+                if flags.contains(*level) {
+                    Some(*march)
+                } else {
+                    None
+                }
+            })
+            .collect(),
 
-    for march in MARCH_FLAGS {
+        None => C_LEVELS
+            .iter()
+            .map(|(_, march)| *march)
+            .collect(),
+    };
+
+    if marches.is_empty() {
+        bail!("no C target levels selected");
+    }
+
+    let mut outputs = Vec::with_capacity(marches.len());
+
+    for march in marches {
         let march_name = march.trim_start_matches("-march=");
         let output = build_dir.join(format!("c-{march_name}"));
 
@@ -175,7 +214,6 @@ fn compile_c(path: &str) -> Result<Vec<String>> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-
                 fs::set_permissions(&output, fs::Permissions::from_mode(0o755))?;
             }
         } else {

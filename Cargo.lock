@@ -156,6 +156,7 @@ name = "spec-elf"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "raw-cpuid",
  "tempfile",
  "zstd",

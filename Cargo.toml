@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+bitflags = "2.13.0"
 raw-cpuid = "11"
 zstd = "0.13.3"
 
