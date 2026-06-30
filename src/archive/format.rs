@@ -61,6 +61,9 @@ where
     P: AsRef<Path>,
     O: AsRef<Path>,
 {
+    let launcher_path = launcher_path.as_ref();
+    let output_path = output_path.as_ref();
+
     let mut output = OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -71,6 +74,15 @@ where
     // beginning of the packed file.
     let mut launcher = File::open(launcher_path)?;
     io::copy(&mut launcher, &mut output)?;
+
+    // Keep the packed file executable when the launcher was executable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = std::fs::metadata(launcher_path)?.permissions().mode();
+        output.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    }
 
     let mut entries = Vec::with_capacity(payload_paths.len());
 
@@ -86,11 +98,8 @@ where
                 format!("failed to open payload {}: {err}", payload_path.display()),
             )
         })?;
-        let mut pay: String = String::new();
-        payload.read_to_string(&mut pay)?;
 
-        let payload = pay.into_bytes();
-        let payload = zstd::encode_all(Cursor::new(payload), 19)?;
+        let payload = zstd::encode_all(&mut payload, 19)?;
 
         let size = io::copy(&mut Cursor::new(payload), &mut output)?;
         let name = payload_path
@@ -166,7 +175,11 @@ where
     let manifest_offset = read_u64(&mut file)?;
     let manifest_size = read_u64(&mut file)?;
 
-    if manifest_offset + manifest_size > file_size - FOOTER_SIZE {
+    let manifest_end = manifest_offset
+        .checked_add(manifest_size)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "manifest range overflow"))?;
+
+    if manifest_end > file_size - FOOTER_SIZE {
         return Err(Error::new(ErrorKind::InvalidData, "invalid manifest range"));
     }
 
@@ -188,6 +201,13 @@ where
 
         let offset = read_u64(&mut file)?;
         let size = read_u64(&mut file)?;
+        let payload_end = offset
+            .checked_add(size)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "payload range overflow"))?;
+
+        if payload_end > manifest_offset {
+            return Err(Error::new(ErrorKind::InvalidData, "invalid payload range"));
+        }
 
         entries.push(Entry { name, offset, size });
     }
@@ -198,8 +218,10 @@ where
     file.read_exact(&mut native_hash)?;
 
     let (offset, size) = find_optimal(&entries, &native_hash)?;
+    let size = usize::try_from(size)
+        .map_err(|_| Error::new(ErrorKind::InvalidData, "payload too large"))?;
 
-    let mut correct_exe = vec![0u8; size as usize];
+    let mut correct_exe = vec![0u8; size];
 
     file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut correct_exe)?;

@@ -21,7 +21,13 @@ pub fn detect_x86_level() -> X86Level {
         return X86Level::X86_64;
     };
 
-    let has_v2 = fi.has_sse3() && fi.has_ssse3() && fi.has_sse41() && fi.has_sse42() && fi.has_popcnt() && fi.has_cmpxchg16b() && epfi.has_lahf_sahf();
+    let has_v2 = fi.has_sse3()
+        && fi.has_ssse3()
+        && fi.has_sse41()
+        && fi.has_sse42()
+        && fi.has_popcnt()
+        && fi.has_cmpxchg16b()
+        && epfi.has_lahf_sahf();
 
     if !has_v2 {
         return X86Level::X86_64;
@@ -31,13 +37,25 @@ pub fn detect_x86_level() -> X86Level {
         return X86Level::V2;
     };
 
-    let has_v3 = fi.has_avx() && fi.has_fma() && fi.has_f16c() && fi.has_movbe() && fi.has_xsave() && efi.has_avx2() && efi.has_bmi1() && efi.has_bmi2() && epfi.has_lzcnt();
+    let has_v3 = fi.has_avx()
+        && fi.has_fma()
+        && fi.has_f16c()
+        && fi.has_movbe()
+        && fi.has_xsave()
+        && efi.has_avx2()
+        && efi.has_bmi1()
+        && efi.has_bmi2()
+        && epfi.has_lzcnt();
 
     if !has_v3 {
         return X86Level::V2;
     }
 
-    let has_v4 = efi.has_avx512f() && efi.has_avx512bw() && efi.has_avx512cd() && efi.has_avx512dq() && efi.has_avx512vl();
+    let has_v4 = efi.has_avx512f()
+        && efi.has_avx512bw()
+        && efi.has_avx512cd()
+        && efi.has_avx512dq()
+        && efi.has_avx512vl();
 
     if has_v4 { X86Level::V4 } else { X86Level::V3 }
 }
@@ -45,16 +63,30 @@ pub fn detect_x86_level() -> X86Level {
 pub fn native_hasher() -> Option<u64> {
     let cpuid = CpuId::new();
 
-    let vendor = cpuid.get_vendor_info().map(|v| v.as_str().trim().to_string())?;
-    let brand = cpuid.get_processor_brand_string().map(|b| b.as_str().trim().to_string())?;
+    let vendor = cpuid
+        .get_vendor_info()
+        .map(|v| v.as_str().trim().to_string())?;
+    let brand = cpuid
+        .get_processor_brand_string()
+        .map(|b| b.as_str().trim().to_string())?;
 
     let mut parts = Vec::new();
 
     parts.push(format!("target_arch={}", std::env::consts::ARCH));
     parts.push(format!("target_os={}", std::env::consts::OS));
     parts.push(format!("target_family={}", std::env::consts::FAMILY));
-    parts.push(format!("target_pointer_width={}", std::mem::size_of::<usize>() * 8));
-    parts.push(format!("target_endian={}", if cfg!(target_endian = "little") { "little" } else { "big" }));
+    parts.push(format!(
+        "target_pointer_width={}",
+        std::mem::size_of::<usize>() * 8
+    ));
+    parts.push(format!(
+        "target_endian={}",
+        if cfg!(target_endian = "little") {
+            "little"
+        } else {
+            "big"
+        }
+    ));
 
     parts.push(format!("cpu_vendor={vendor}"));
     parts.push(format!("cpu_brand={brand}"));
