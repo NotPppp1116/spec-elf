@@ -358,6 +358,9 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
 
     let package_name = cargo_package_name(&project_dir)?;
 
+    const TARGET_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+    const TARGET_RUSTFLAGS_ENV: &str = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS";
+
     let mut outputs = Vec::with_capacity(RUST_MARCH_FLAGS.len());
 
     for (name, rustflags) in RUST_MARCH_FLAGS {
@@ -365,9 +368,12 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
         let output = build_dir.join(format!("rust-{name}"));
 
         let status = Command::new("cargo")
-            .args(["build", "--release"])
+            .args(["build", "--release", "--target", TARGET_TRIPLE])
             .current_dir(&project_dir)
-            .env("RUSTFLAGS", rustflags)
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .env_remove("CARGO_BUILD_RUSTFLAGS")
+            .env(TARGET_RUSTFLAGS_ENV, rustflags)
             .env("CARGO_TARGET_DIR", &target_dir)
             .status()
             .with_context(|| format!("failed to run cargo for {name}"))?;
@@ -376,7 +382,10 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
             bail!("cargo failed for {name} with status {status}");
         }
 
-        let built_bin = target_dir.join("release").join(&package_name);
+        let built_bin = target_dir
+            .join(TARGET_TRIPLE)
+            .join("release")
+            .join(&package_name);
 
         fs::copy(&built_bin, &output).with_context(|| {
             format!(
@@ -385,6 +394,13 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
                 output.display()
             )
         })?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            fs::set_permissions(&output, fs::Permissions::from_mode(0o755))?;
+        }
 
         outputs.push(output.display().to_string());
     }
