@@ -112,13 +112,24 @@ fn main() -> Result<(), anyhow::Error> {
     let dir = env::current_dir()?;
     let dst = compile_lang(dir.to_str().expect("current directory is not valid UTF-8"))?;
 
-    let output_path = dir.join(current_name);
+    let output_base_path = dir.join(current_name);
+
+    let output_path = output_base_path.with_file_name(format!(
+        "{}.spec-elf",
+        output_base_path
+            .file_name()
+            .expect("filename")
+            .to_string_lossy()
+    ));
 
     // When spec-elf is run from the same directory where it will write the
     // packed output, avoid truncating the running executable while it is still
     // being copied by writing to a temporary sibling first.
     let pack_output_path = if same_path(&current_path, &output_path) {
-        output_path.with_extension("packed")
+        output_path.with_file_name(format!(
+            "{}.tmp",
+            output_path.file_name().expect("filename").to_string_lossy()
+        ))
     } else {
         output_path.clone()
     };
@@ -126,28 +137,15 @@ fn main() -> Result<(), anyhow::Error> {
     pack_files(&current_path, &pack_output_path, &dst)?;
 
     if pack_output_path != output_path {
-        let parent = output_path.parent().expect("couldnt catch parent");
-    
-        let new_name = output_path
-            .file_name()
-            .expect("filename")
-            .to_str()
-            .unwrap();
-    
-        let mut new_name = new_name.to_string();
-        new_name.push_str(".spec-elf");
-    
-        let np = parent.join(new_name);
-    
-        fs::rename(&pack_output_path, &np)?;
+        fs::rename(&pack_output_path, &output_path)?;
     }
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
         fs::set_permissions(&output_path, fs::Permissions::from_mode(0o755))?;
     }
-
     Ok(())
 }
 
