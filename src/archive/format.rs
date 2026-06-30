@@ -407,4 +407,74 @@ mod tests {
 
         Ok(())
     }
+    #[test]
+    fn packed_file_accepts_non_utf8_binary_payloads() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+
+        let launcher = dir.path().join("launcher");
+        let output = dir.path().join("packed");
+
+        let native = dir.path().join("c-native");
+        let x86_64 = dir.path().join("c-x86-64");
+        let v2 = dir.path().join("c-x86-64-v2");
+        let v3 = dir.path().join("c-x86-64-v3");
+        let v4 = dir.path().join("c-x86-64-v4");
+
+        // This intentionally contains invalid UTF-8 bytes.
+        // Old buggy code using read_to_string() will fail here.
+        let binary_payload = b"\x7fELF\x02\x01\x01\x00\xff\xfe\xfd\x00binary payload";
+
+        fs::write(&launcher, b"fake launcher")?;
+        fs::write(&native, binary_payload)?;
+        fs::write(&x86_64, binary_payload)?;
+        fs::write(&v2, binary_payload)?;
+        fs::write(&v3, binary_payload)?;
+        fs::write(&v4, binary_payload)?;
+
+        let payloads = vec![
+            native.display().to_string(),
+            x86_64.display().to_string(),
+            v2.display().to_string(),
+            v3.display().to_string(),
+            v4.display().to_string(),
+        ];
+
+        pack_files(&launcher, &output, &payloads)?;
+
+        let actual = read_back(&output)?;
+
+        assert_eq!(actual, binary_payload);
+
+        Ok(())
+    }
+    #[cfg(unix)]
+    #[test]
+    fn packed_file_preserves_launcher_executable_permissions() -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+
+        let launcher = dir.path().join("launcher");
+        let output = dir.path().join("packed");
+        let payload = dir.path().join("c-x86-64");
+
+        fs::write(&launcher, b"fake launcher")?;
+        fs::write(&payload, b"payload")?;
+
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
+
+        let payloads = vec![payload.display().to_string()];
+
+        pack_files(&launcher, &output, &payloads)?;
+
+        let mode = fs::metadata(&output)?.permissions().mode();
+
+        assert_ne!(
+            mode & 0o111,
+            0,
+            "packed launcher should keep at least one executable bit"
+        );
+
+        Ok(())
+    }
 }
