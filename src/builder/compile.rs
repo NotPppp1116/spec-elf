@@ -6,11 +6,29 @@ use std::{
     process::Command,
 };
 
-pub const MARCH_FLAGS: [&str; 5] = ["-march=native", "-march=x86-64", "-march=x86-64-v2", "-march=x86-64-v3", "-march=x86-64-v4"];
+pub const MARCH_FLAGS: [&str; 5] = [
+    "-march=native",
+    "-march=x86-64",
+    "-march=x86-64-v2",
+    "-march=x86-64-v3",
+    "-march=x86-64-v4",
+];
 
-pub const ZIG_MARCH_FLAGS: [&str; 5] = ["-mcpu=native", "-mcpu=x86_64", "-mcpu=x86_64_v2", "-mcpu=x86_64_v3", "-mcpu=x86_64_v4"];
+pub const ZIG_MARCH_FLAGS: [&str; 5] = [
+    "-mcpu=native",
+    "-mcpu=x86_64",
+    "-mcpu=x86_64_v2",
+    "-mcpu=x86_64_v3",
+    "-mcpu=x86_64_v4",
+];
 
-pub const RUST_MARCH_FLAGS: [(&str, &str); 5] = [("native", "-C target-cpu=native"), ("x86_64", "-C target-cpu=x86-64"), ("x86_64_v2", "-C target-cpu=x86-64-v2"), ("x86_64_v3", "-C target-cpu=x86-64-v3"), ("x86_64_v4", "-C target-cpu=x86-64-v4")];
+pub const RUST_MARCH_FLAGS: [(&str, &str); 5] = [
+    ("native", "-C target-cpu=native"),
+    ("x86_64", "-C target-cpu=x86-64"),
+    ("x86_64_v2", "-C target-cpu=x86-64-v2"),
+    ("x86_64_v3", "-C target-cpu=x86-64-v3"),
+    ("x86_64_v4", "-C target-cpu=x86-64-v4"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Idiomes {
@@ -37,7 +55,11 @@ fn find_idiome(path: &str) -> Result<Idiomes> {
 
     count_languages_recursive(&project_dir, &mut counts)?;
 
-    counts.into_iter().max_by_key(|(_, count)| *count).map(|(idiome, _)| idiome).context("could not detect project language")
+    counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(idiome, _)| idiome)
+        .context("could not detect project language")
 }
 
 fn count_languages_recursive(dir: &Path, counts: &mut HashMap<Idiomes, usize>) -> Result<()> {
@@ -112,8 +134,14 @@ fn compile_c(path: &str) -> Result<Vec<String>> {
                 .arg(&cmake_build_dir)
                 .arg("-DCMAKE_BUILD_TYPE=Release")
                 .arg(format!("-DCMAKE_C_FLAGS_RELEASE=-O3 {march}"))
-                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}", cmake_output_dir.display()))
-                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={}", cmake_output_dir.display()))
+                .arg(format!(
+                    "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}",
+                    cmake_output_dir.display()
+                ))
+                .arg(format!(
+                    "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={}",
+                    cmake_output_dir.display()
+                ))
                 .current_dir(&project_dir)
                 .status()
                 .with_context(|| format!("could not configure cmake for {march_name}"))?;
@@ -122,13 +150,21 @@ fn compile_c(path: &str) -> Result<Vec<String>> {
                 bail!("cmake configure failed for {march_name} with status {status}");
             }
 
-            let status = Command::new("cmake").arg("--build").arg(&cmake_build_dir).arg("--config").arg("Release").current_dir(&project_dir).status().with_context(|| format!("could not build cmake project for {march_name}"))?;
+            let status = Command::new("cmake")
+                .arg("--build")
+                .arg(&cmake_build_dir)
+                .arg("--config")
+                .arg("Release")
+                .current_dir(&project_dir)
+                .status()
+                .with_context(|| format!("could not build cmake project for {march_name}"))?;
 
             if !status.success() {
                 bail!("cmake build failed for {march_name} with status {status}");
             }
 
-            let built_exe = find_single_executable(&cmake_output_dir).with_context(|| format!("could not find cmake executable for {march_name}"))?;
+            let built_exe = find_single_executable(&cmake_output_dir)
+                .with_context(|| format!("could not find cmake executable for {march_name}"))?;
 
             if output.exists() {
                 fs::remove_file(&output)?;
@@ -151,7 +187,12 @@ fn compile_c(path: &str) -> Result<Vec<String>> {
                 command.arg(source);
             }
 
-            let status = command.arg("-o").arg(&output).current_dir(&project_dir).status().with_context(|| format!("could not run gcc for {march_name}"))?;
+            let status = command
+                .arg("-o")
+                .arg(&output)
+                .current_dir(&project_dir)
+                .status()
+                .with_context(|| format!("could not run gcc for {march_name}"))?;
 
             if !status.success() {
                 bail!("gcc failed for {march_name} with status {status}");
@@ -195,8 +236,14 @@ fn compile_cpp(path: &str) -> Result<Vec<String>> {
                 .arg(&cmake_build_dir)
                 .arg("-DCMAKE_BUILD_TYPE=Release")
                 .arg(format!("-DCMAKE_CXX_FLAGS_RELEASE=-O3 {march}"))
-                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}", cmake_output_dir.display()))
-                .arg(format!("-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={}", cmake_output_dir.display()))
+                .arg(format!(
+                    "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={}",
+                    cmake_output_dir.display()
+                ))
+                .arg(format!(
+                    "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={}",
+                    cmake_output_dir.display()
+                ))
                 .current_dir(&project_dir)
                 .status()
                 .with_context(|| format!("could not configure cmake for {march_name}"))?;
@@ -205,13 +252,21 @@ fn compile_cpp(path: &str) -> Result<Vec<String>> {
                 bail!("cmake configure failed for {march_name} with status {status}");
             }
 
-            let status = Command::new("cmake").arg("--build").arg(&cmake_build_dir).arg("--config").arg("Release").current_dir(&project_dir).status().with_context(|| format!("could not build cmake project for {march_name}"))?;
+            let status = Command::new("cmake")
+                .arg("--build")
+                .arg(&cmake_build_dir)
+                .arg("--config")
+                .arg("Release")
+                .current_dir(&project_dir)
+                .status()
+                .with_context(|| format!("could not build cmake project for {march_name}"))?;
 
             if !status.success() {
                 bail!("cmake build failed for {march_name} with status {status}");
             }
 
-            let built_exe = find_single_executable(&cmake_output_dir).with_context(|| format!("could not find cmake executable for {march_name}"))?;
+            let built_exe = find_single_executable(&cmake_output_dir)
+                .with_context(|| format!("could not find cmake executable for {march_name}"))?;
 
             if output.exists() {
                 fs::remove_file(&output)?;
@@ -228,13 +283,23 @@ fn compile_cpp(path: &str) -> Result<Vec<String>> {
         } else {
             let mut command = Command::new("g++");
 
-            command.arg("-O3").arg(march).arg("-I.").arg("-Iinclude").arg("-Isrc");
+            command
+                .arg("-O3")
+                .arg(march)
+                .arg("-I.")
+                .arg("-Iinclude")
+                .arg("-Isrc");
 
             for source in &sources {
                 command.arg(source);
             }
 
-            let status = command.arg("-o").arg(&output).current_dir(&project_dir).status().with_context(|| format!("could not run g++ for {march_name}"))?;
+            let status = command
+                .arg("-o")
+                .arg(&output)
+                .current_dir(&project_dir)
+                .status()
+                .with_context(|| format!("could not run g++ for {march_name}"))?;
 
             if !status.success() {
                 bail!("g++ failed for {march_name} with status {status}");
@@ -252,7 +317,11 @@ fn compile_zig(path: &str) -> Result<Vec<String>> {
     let build_dir = project_dir.join("build");
     fs::create_dir_all(&build_dir)?;
 
-    let source = if Path::new(path).is_file() { PathBuf::from(path) } else { find_first_source(&project_dir, &["zig"])? };
+    let source = if Path::new(path).is_file() {
+        PathBuf::from(path)
+    } else {
+        find_first_source(&project_dir, &["zig"])?
+    };
 
     let mut outputs = Vec::with_capacity(ZIG_MARCH_FLAGS.len());
 
@@ -261,7 +330,16 @@ fn compile_zig(path: &str) -> Result<Vec<String>> {
         let output = build_dir.join(format!("zig-{name}"));
         let emit = format!("-femit-bin={}", output.display());
 
-        let status = Command::new("zig").arg("build-exe").arg(&source).arg("-O").arg("ReleaseFast").arg(march).arg(&emit).current_dir(&project_dir).status().with_context(|| format!("could not run zig for {name}"))?;
+        let status = Command::new("zig")
+            .arg("build-exe")
+            .arg(&source)
+            .arg("-O")
+            .arg("ReleaseFast")
+            .arg(march)
+            .arg(&emit)
+            .current_dir(&project_dir)
+            .status()
+            .with_context(|| format!("could not run zig for {name}"))?;
 
         if !status.success() {
             bail!("zig failed for {name} with status {status}");
@@ -286,7 +364,13 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
         let target_dir = project_dir.join("target").join(format!("rust-{name}"));
         let output = build_dir.join(format!("rust-{name}"));
 
-        let status = Command::new("cargo").args(["build", "--release"]).current_dir(&project_dir).env("RUSTFLAGS", rustflags).env("CARGO_TARGET_DIR", &target_dir).status().with_context(|| format!("failed to run cargo for {name}"))?;
+        let status = Command::new("cargo")
+            .args(["build", "--release"])
+            .current_dir(&project_dir)
+            .env("RUSTFLAGS", rustflags)
+            .env("CARGO_TARGET_DIR", &target_dir)
+            .status()
+            .with_context(|| format!("failed to run cargo for {name}"))?;
 
         if !status.success() {
             bail!("cargo failed for {name} with status {status}");
@@ -294,7 +378,13 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
 
         let built_bin = target_dir.join("release").join(&package_name);
 
-        fs::copy(&built_bin, &output).with_context(|| format!("failed to copy built binary from {} to {}", built_bin.display(), output.display()))?;
+        fs::copy(&built_bin, &output).with_context(|| {
+            format!(
+                "failed to copy built binary from {} to {}",
+                built_bin.display(),
+                output.display()
+            )
+        })?;
 
         outputs.push(output.display().to_string());
     }
@@ -306,7 +396,10 @@ fn project_dir_from_path(path: &str) -> Result<PathBuf> {
     let path = Path::new(path);
 
     if path.is_file() {
-        return path.parent().map(Path::to_path_buf).context("file path has no parent directory");
+        return path
+            .parent()
+            .map(Path::to_path_buf)
+            .context("file path has no parent directory");
     }
 
     Ok(path.to_path_buf())
@@ -328,7 +421,8 @@ fn find_cargo_project_dir(path: &str) -> Result<PathBuf> {
 
 fn cargo_package_name(project_dir: &Path) -> Result<String> {
     let cargo_toml_path = project_dir.join("Cargo.toml");
-    let cargo_toml = fs::read_to_string(&cargo_toml_path).with_context(|| format!("failed to read {}", cargo_toml_path.display()))?;
+    let cargo_toml = fs::read_to_string(&cargo_toml_path)
+        .with_context(|| format!("failed to read {}", cargo_toml_path.display()))?;
 
     for line in cargo_toml.lines() {
         let line = line.trim();
@@ -347,7 +441,11 @@ fn collect_sources(project_dir: &Path, extensions: &[&str]) -> Result<Vec<PathBu
     Ok(sources)
 }
 
-fn collect_sources_recursive(dir: &Path, extensions: &[&str], sources: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_sources_recursive(
+    dir: &Path,
+    extensions: &[&str],
+    sources: &mut Vec<PathBuf>,
+) -> Result<()> {
     for entry in read_dir(dir)? {
         let entry = match entry {
             Ok(entry) => entry,
@@ -415,9 +513,8 @@ fn find_single_executable(dir: &Path) -> Result<PathBuf> {
 fn find_first_source(project_dir: &Path, extensions: &[&str]) -> Result<PathBuf> {
     let sources = collect_sources(project_dir, extensions)?;
 
-    sources.into_iter().next().context("could not find source file")
+    sources
+        .into_iter()
+        .next()
+        .context("could not find source file")
 }
-
-
-
-

@@ -51,13 +51,19 @@ fn main() -> Result<(), anyhow::Error> {
         [_program, flag] if is_help_flag(flag) => help(),
         [_program, flag, dir] if is_dir_flag(flag) && !dir.is_empty() => Some(dir.as_str()),
         [_program, flag] if is_dir_flag(flag) => usage_error("--dir requires a target directory"),
-        [_program, flag, _dir] if is_dir_flag(flag) => usage_error("--dir requires exactly one target directory"),
-        [_program, flag, ..] if is_help_flag(flag) => usage_error("help flags do not take extra arguments"),
+        [_program, flag, _dir] if is_dir_flag(flag) => {
+            usage_error("--dir requires exactly one target directory")
+        }
+        [_program, flag, ..] if is_help_flag(flag) => {
+            usage_error("help flags do not take extra arguments")
+        }
         _ => usage_error("invalid arguments"),
     };
 
     let current_path = env::current_exe()?;
-    let current_name = current_path.file_name().expect("current executable has no file name");
+    let current_name = current_path
+        .file_name()
+        .expect("current executable has no file name");
 
     // A packed spec-elf binary is also a valid launcher. If the current
     // executable already contains a footer, this run is the runtime path:
@@ -111,7 +117,11 @@ fn main() -> Result<(), anyhow::Error> {
     // When spec-elf is run from the same directory where it will write the
     // packed output, avoid truncating the running executable while it is still
     // being copied by writing to a temporary sibling first.
-    let pack_output_path = if same_path(&current_path, &output_path) { output_path.with_extension("packed") } else { output_path.clone() };
+    let pack_output_path = if same_path(&current_path, &output_path) {
+        output_path.with_extension("packed")
+    } else {
+        output_path.clone()
+    };
 
     pack_files(&current_path, &pack_output_path, &dst)?;
 

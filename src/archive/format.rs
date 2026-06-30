@@ -1,7 +1,7 @@
 use crate::arch::x86::{X86Level, detect_x86_level, native_hasher};
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write},
+    io::{self, Cursor, Error, ErrorKind, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -52,17 +52,37 @@ fn read_u64(file: &mut File) -> io::Result<u64> {
 /// The resulting file still starts with the original launcher bytes, so the OS
 /// can execute it normally. Everything after the launcher is data that the
 /// launcher reads back from its own executable at runtime.
-pub fn pack_files<P, O>(launcher_path: P, output_path: O, payload_paths: &[String]) -> io::Result<()>
+pub fn pack_files<P, O>(
+    launcher_path: P,
+    output_path: O,
+    payload_paths: &[String],
+) -> io::Result<()>
 where
     P: AsRef<Path>,
     O: AsRef<Path>,
 {
-    let mut output = OpenOptions::new().create(true).truncate(true).write(true).open(output_path)?;
+    let launcher_path = launcher_path.as_ref();
+    let output_path = output_path.as_ref();
+
+    let mut output = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(output_path)?;
 
     // Copy the launcher first. This preserves a valid executable header at the
     // beginning of the packed file.
     let mut launcher = File::open(launcher_path)?;
     io::copy(&mut launcher, &mut output)?;
+
+    // Keep the packed file executable when the launcher was executable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = std::fs::metadata(launcher_path)?.permissions().mode();
+        output.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    }
 
     let mut entries = Vec::with_capacity(payload_paths.len());
 
@@ -72,9 +92,26 @@ where
         // The current output position is the start of this payload inside the
         // final packed file. The manifest stores this absolute offset.
         let offset = output.stream_position()?;
-        let mut payload = File::open(payload_path).map_err(|err| Error::new(err.kind(), format!("failed to open payload {}: {err}", payload_path.display())))?;
-        let size = io::copy(&mut payload, &mut output)?;
-        let name = payload_path.file_name().and_then(|name| name.to_str()).ok_or_else(|| Error::new(ErrorKind::InvalidInput, "payload path has no valid file name"))?.to_string();
+        let mut payload = File::open(payload_path).map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("failed to open payload {}: {err}", payload_path.display()),
+            )
+        })?;
+
+        let payload = zstd::encode_all(&mut payload, 19)?;
+
+        let size = io::copy(&mut Cursor::new(payload), &mut output)?;
+        let name = payload_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidInput,
+                    "payload path has no valid file name",
+                )
+            })?
+            .to_string();
 
         entries.push(Entry { name, offset, size });
     }
@@ -138,7 +175,11 @@ where
     let manifest_offset = read_u64(&mut file)?;
     let manifest_size = read_u64(&mut file)?;
 
-    if manifest_offset + manifest_size > file_size - FOOTER_SIZE {
+    let manifest_end = manifest_offset
+        .checked_add(manifest_size)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "manifest range overflow"))?;
+
+    if manifest_end > file_size - FOOTER_SIZE {
         return Err(Error::new(ErrorKind::InvalidData, "invalid manifest range"));
     }
 
@@ -155,10 +196,18 @@ where
         let mut name_bytes = vec![0u8; name_len];
         file.read_exact(&mut name_bytes)?;
 
-        let name = String::from_utf8(name_bytes).map_err(|_| Error::new(ErrorKind::InvalidData, "invalid UTF-8 in file name"))?;
+        let name = String::from_utf8(name_bytes)
+            .map_err(|_| Error::new(ErrorKind::InvalidData, "invalid UTF-8 in file name"))?;
 
         let offset = read_u64(&mut file)?;
         let size = read_u64(&mut file)?;
+        let payload_end = offset
+            .checked_add(size)
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "payload range overflow"))?;
+
+        if payload_end > manifest_offset {
+            return Err(Error::new(ErrorKind::InvalidData, "invalid payload range"));
+        }
 
         entries.push(Entry { name, offset, size });
     }
@@ -169,11 +218,15 @@ where
     file.read_exact(&mut native_hash)?;
 
     let (offset, size) = find_optimal(&entries, &native_hash)?;
+    let size = usize::try_from(size)
+        .map_err(|_| Error::new(ErrorKind::InvalidData, "payload too large"))?;
 
-    let mut correct_exe = vec![0u8; size as usize];
+    let mut correct_exe = vec![0u8; size];
 
     file.seek(SeekFrom::Start(offset))?;
     file.read_exact(&mut correct_exe)?;
+
+    let correct_exe = zstd::decode_all(Cursor::new(correct_exe))?;
 
     Ok(correct_exe)
 }
@@ -185,12 +238,12 @@ fn find_optimal(entries: &[Entry], native_hash: &[u8]) -> io::Result<(u64, u64)>
     // Prefer the `native` build only when the CPU/platform hash written during
     // packing matches the current machine. Otherwise, fall back to the portable
     // x86-64 level names.
-    if let Some(b) = native_hasher() {
-        if b.to_le_bytes() == native_hash {
-            for entry in entries {
-                if entry.name.contains("native") {
-                    return Ok((entry.offset, entry.size));
-                }
+    if let Some(b) = native_hasher()
+        && b.to_le_bytes() == native_hash
+    {
+        for entry in entries {
+            if entry.name.contains("native") {
+                return Ok((entry.offset, entry.size));
             }
         }
     }
@@ -204,12 +257,20 @@ fn find_optimal(entries: &[Entry], native_hash: &[u8]) -> io::Result<(u64, u64)>
     let wanted_with_underscores = wanted.replace('-', "_");
 
     for entry in entries {
-        if entry.name == wanted || entry.name.ends_with(wanted) || entry.name == wanted_with_underscores || entry.name.ends_with(&wanted_with_underscores) || entry.name == format!("-march={wanted}") {
+        if entry.name == wanted
+            || entry.name.ends_with(wanted)
+            || entry.name == wanted_with_underscores
+            || entry.name.ends_with(&wanted_with_underscores)
+            || entry.name == format!("-march={wanted}")
+        {
             return Ok((entry.offset, entry.size));
         }
     }
 
-    Err(io::Error::new(io::ErrorKind::NotFound, "no compatible binary found"))
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "no compatible binary found",
+    ))
 }
 
 /// Return whether a file looks like a launchable spec-elf archive.
