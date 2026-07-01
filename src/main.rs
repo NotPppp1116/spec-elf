@@ -1,7 +1,7 @@
 use crate::archive::format::{is_archive, pack_files, read_back};
-use crate::builder::compile::{compile_lang, Levels};
+use crate::builder::compile::{Levels, compile_lang};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{
     env, fs,
     io::ErrorKind,

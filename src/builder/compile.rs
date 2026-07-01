@@ -62,8 +62,8 @@ pub fn compile_lang(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     match idiome {
         Idiomes::C => compile_c(path, flags),
         Idiomes::Cpp => compile_cpp(path, flags),
-        Idiomes::Rust => compile_rust(path,flags),
-        Idiomes::Zig => compile_zig(path,flags),
+        Idiomes::Rust => compile_rust(path, flags),
+        Idiomes::Zig => compile_zig(path, flags),
     }
 }
 
@@ -369,10 +369,7 @@ fn compile_zig(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
             })
             .collect(),
 
-        None => ZIG_LEVELS
-            .iter()
-            .map(|(_, march)| *march)
-            .collect(),
+        None => ZIG_LEVELS.iter().map(|(_, march)| *march).collect(),
     };
 
     if marches.is_empty() {
