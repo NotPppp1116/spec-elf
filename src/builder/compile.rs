@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use bitflags::Flags;
 use std::{
     collections::HashMap,
     fs::{self, read_dir},
@@ -132,24 +133,7 @@ fn compile_c(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
 
     let has_cmake = project_dir.join("CMakeLists.txt").exists();
 
-    let marches: Vec<&str> = match flags {
-        Some(flags) => C_LEVELS
-            .iter()
-            .filter_map(|(level, march)| {
-                if flags.contains(*level) {
-                    Some(*march)
-                } else {
-                    None
-                }
-            })
-            .collect(),
-
-        None => C_LEVELS
-            .iter()
-            .map(|(_, march)| *march)
-            .collect(),
-    };
-
+    let marches: Vec<&str> = fileter_flags(flags);
     if marches.is_empty() {
         bail!("no C target levels selected");
     }
@@ -242,7 +226,7 @@ fn compile_c(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
 
     Ok(outputs)
 }
-fn compile_cpp(path: &str) -> Result<Vec<String>> {
+fn compile_cpp(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     let project_dir = project_dir_from_path(path)?;
     let build_dir = project_dir.join("build");
     fs::create_dir_all(&build_dir)?;
@@ -255,6 +239,10 @@ fn compile_cpp(path: &str) -> Result<Vec<String>> {
 
     let has_cmake = project_dir.join("CMakeLists.txt").is_file();
 
+    let marches = fileter_flags(flags);
+    if marches.is_empty() {
+        bail!("no cpp targets selected");
+    }
     let mut outputs = Vec::with_capacity(MARCH_FLAGS.len());
 
     for march in MARCH_FLAGS {
@@ -571,4 +559,21 @@ fn find_first_source(project_dir: &Path, extensions: &[&str]) -> Result<PathBuf>
         .into_iter()
         .next()
         .context("could not find source file")
+}
+fn fileter_flags(flags: Option<&Levels>) -> Vec<&str> {
+    let marches: Vec<&str> = match flags {
+        Some(flags) => C_LEVELS
+            .iter()
+            .filter_map(|(level, march)| {
+                if flags.contains(*level) {
+                    Some(*march)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+
+        None => C_LEVELS.iter().map(|(_, march)| *march).collect(),
+    };
+    marches
 }
