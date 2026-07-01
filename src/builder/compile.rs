@@ -61,7 +61,7 @@ pub fn compile_lang(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
 
     match idiome {
         Idiomes::C => compile_c(path, flags),
-        Idiomes::Cpp => compile_cpp(path),
+        Idiomes::Cpp => compile_cpp(path,flags),
         Idiomes::Rust => compile_rust(path),
         Idiomes::Zig => compile_zig(path),
     }

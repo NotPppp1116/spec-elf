@@ -110,7 +110,7 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     let dir = env::current_dir()?;
-    let dst = compile_lang(dir.to_str().expect("current directory is not valid UTF-8"))?;
+    let dst = compile_lang(dir.to_str().expect("current directory is not valid UTF-8"),None)?;
 
     let output_base_path = dir.join(current_name);
 
