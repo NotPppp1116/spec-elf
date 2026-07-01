@@ -2,6 +2,9 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::{fs::OpenOptions, io::Read, path::Path};
 
+
+// the objective is to create a toml file that allows config
+//opening new possibilities
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Languages {
@@ -19,6 +22,7 @@ struct Config {
 }
 
 impl Config {
+    //loads the config
     fn load(project_dir: &Path) -> Result<Option<Self>> {
         let config_path = project_dir.join("spec-elf.toml");
 
@@ -35,6 +39,7 @@ impl Config {
         file.read_to_string(&mut contents)
             .with_context(|| format!("failed to read {}", config_path.display()))?;
 
+        //loads the config to return
         let config: Config = toml::from_str(&contents)
             .with_context(|| format!("failed to parse {}", config_path.display()))?;
 
