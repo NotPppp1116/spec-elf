@@ -7,6 +7,8 @@ edition = "2024"
 anyhow = "1"
 bitflags = "2.13.0"
 raw-cpuid = "11"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.2"
 zstd = "0.13.3"
 
 [dev-dependencies]

@@ -14,6 +14,7 @@ use std::{
 mod arch;
 mod archive;
 mod builder;
+mod toml;
 
 struct Cli {
     target_dir: Option<PathBuf>,
