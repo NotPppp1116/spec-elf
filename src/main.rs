@@ -251,8 +251,11 @@ fn replace_current_executable(current_path: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755))
-            .with_context(|| format!("failed to chmod {}", temp_path.display()))?;
+
+        if let Err(error) = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755)) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error).with_context(|| format!("failed to chmod {}", temp_path.display()));
+        }
     }
 
     if let Err(err) = fs::rename(&temp_path, current_path) {
