@@ -162,19 +162,27 @@ fn main() -> Result<()> {
 
     if is_archive(&current_path)? {
         let correct_exe = read_back(&current_path)?;
-        let final_file_path = env::current_dir()?.join(current_name);
-
+    
+        let temp_name = format!(
+            ".spec-elf-{}-{}",
+            std::process::id(),
+            current_name.to_string_lossy()
+        );
+    
+        let final_file_path = env::temp_dir().join(temp_name);
+    
         fs::write(&final_file_path, correct_exe)?;
-
+    
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&final_file_path, fs::Permissions::from_mode(0o755))?;
         }
-
-        #[allow(clippy::zombie_processes)]
-        Command::new(final_file_path).spawn()?;
-
+    
+        Command::new(&final_file_path)
+            .spawn()
+            .with_context(|| format!("failed to launch {}", final_file_path.display()))?;
+    
         return Ok(());
     }
 
