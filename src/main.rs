@@ -1,26 +1,46 @@
 use crate::archive::format::{is_archive, pack_files, read_back};
-use crate::builder::compile::compile_lang;
-use std::io::ErrorKind;
-use std::process::Command;
-use std::{self, env, fs, path::Path};
+use crate::builder::compile::{compile_lang, Levels};
+
+use anyhow::{bail, Context, Result};
+use std::{
+    env, fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 mod arch;
 mod archive;
 mod builder;
 
-#[derive(PartialEq)]
-enum Args {
-    No,
-    Yes,
+struct Cli {
+    target_dir: Option<PathBuf>,
+    levels: Option<Levels>,
+}
+
+enum CliAction {
+    Help,
+    Build(Cli),
 }
 
 fn usage() -> &'static str {
-    "usage: spec-elf [--dir <target-dir>]\n\nRun with no arguments from the target project directory, or pass --dir followed by the target project directory."
-}
+    "usage: spec-elf [--dir <target-dir>] [-ct <levels...>]
 
-fn help() -> ! {
-    println!("{}", usage());
-    std::process::exit(0);
+Run with no arguments from the target project directory, or pass --dir followed by the target project directory.
+
+Target levels:
+  base     x86-64 baseline
+  v1       x86-64 baseline
+  v2       x86-64-v2
+  v3       x86-64-v3
+  v4       x86-64-v4
+  native   current CPU
+
+Examples:
+  spec-elf
+  spec-elf --dir ./my-project
+  spec-elf -ct base v2 v3
+  spec-elf --dir ./my-project -ct native"
 }
 
 fn usage_error(message: &str) -> ! {
@@ -38,26 +58,101 @@ fn is_dir_flag(arg: &str) -> bool {
     matches!(arg.as_str(), "--dir" | "-dir")
 }
 
-fn main() -> Result<(), anyhow::Error> {
+fn is_ct_flag(arg: &str) -> bool {
+    let arg = arg.to_ascii_lowercase();
+    matches!(arg.as_str(), "-ct" | "--ct")
+}
+
+fn parse_level(arg: &str) -> Result<Levels> {
+    match arg.to_ascii_lowercase().as_str() {
+        "base" | "v1" => Ok(Levels::V1),
+        "v2" => Ok(Levels::V2),
+        "v3" => Ok(Levels::V3),
+        "v4" => Ok(Levels::V4),
+        "native" => Ok(Levels::NATIVE),
+        _ => bail!("unknown target level: {arg}"),
+    }
+}
+
+fn parse_args(args: &[String]) -> Result<CliAction> {
+    if args.len() == 2 && is_help_flag(&args[1]) {
+        return Ok(CliAction::Help);
+    }
+
+    let mut target_dir = None;
+    let mut levels = None;
+
+    let mut i = 1;
+
+    while i < args.len() {
+        let arg = args[i].as_str();
+
+        if is_help_flag(arg) {
+            bail!("help flags do not take extra arguments");
+        }
+
+        if is_dir_flag(arg) {
+            i += 1;
+
+            let Some(dir) = args.get(i) else {
+                bail!("--dir requires a target directory");
+            };
+
+            if dir.starts_with('-') {
+                bail!("--dir requires a target directory");
+            }
+
+            if target_dir.is_some() {
+                bail!("--dir was passed more than once");
+            }
+
+            target_dir = Some(PathBuf::from(dir));
+            i += 1;
+            continue;
+        }
+
+        if is_ct_flag(arg) {
+            i += 1;
+
+            let mut selected = levels.unwrap_or_else(Levels::empty);
+            let mut saw_level = false;
+
+            while let Some(level_arg) = args.get(i) {
+                if level_arg.starts_with('-') {
+                    break;
+                }
+
+                selected |= parse_level(level_arg)?;
+                saw_level = true;
+                i += 1;
+            }
+
+            if !saw_level {
+                bail!("-ct requires at least one target level");
+            }
+
+            levels = Some(selected);
+            continue;
+        }
+
+        bail!("unknown argument: {arg}");
+    }
+
+    Ok(CliAction::Build(Cli { target_dir, levels }))
+}
+
+fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
-    let has_args = if args.len() > 1 { Args::Yes } else { Args::No };
+    let action = parse_args(&args).unwrap_or_else(|e| usage_error(&e.to_string()));
 
-    // Accept only the supported invocation shapes here. Unknown arguments must
-    // stop before the build path, otherwise a typo like `spec-elf foo` would
-    // accidentally build the current directory.
-    let target_dir = match args.as_slice() {
-        [_program] => None,
-        [_program, flag] if is_help_flag(flag) => help(),
-        [_program, flag, dir] if is_dir_flag(flag) && !dir.is_empty() => Some(dir.as_str()),
-        [_program, flag] if is_dir_flag(flag) => usage_error("--dir requires a target directory"),
-        [_program, flag, _dir] if is_dir_flag(flag) => {
-            usage_error("--dir requires exactly one target directory")
-        }
-        [_program, flag, ..] if is_help_flag(flag) => {
-            usage_error("help flags do not take extra arguments")
-        }
-        _ => usage_error("invalid arguments"),
+    if let CliAction::Help = action {
+        println!("{}", usage());
+        return Ok(());
+    }
+
+    let CliAction::Build(cli) = action else {
+        unreachable!();
     };
 
     let current_path = env::current_exe()?;
@@ -65,9 +160,6 @@ fn main() -> Result<(), anyhow::Error> {
         .file_name()
         .expect("current executable has no file name");
 
-    // A packed spec-elf binary is also a valid launcher. If the current
-    // executable already contains a footer, this run is the runtime path:
-    // extract the best payload for this machine and launch it.
     if is_archive(&current_path)? {
         let correct_exe = read_back(&current_path)?;
         let final_file_path = env::current_dir()?.join(current_name);
@@ -77,7 +169,6 @@ fn main() -> Result<(), anyhow::Error> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-
             fs::set_permissions(&final_file_path, fs::Permissions::from_mode(0o755))?;
         }
 
@@ -87,21 +178,15 @@ fn main() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
-    // In build mode, --dir changes the target project directory before
-    // language detection and compilation start.
-    if has_args == Args::Yes {
-        let Some(target_dir) = target_dir else {
-            usage_error("invalid arguments");
-        };
-
+    if let Some(target_dir) = &cli.target_dir {
         match env::set_current_dir(target_dir) {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => {
                 match e.kind() {
-                    ErrorKind::NotFound => println!("directory not found"),
-                    ErrorKind::PermissionDenied => println!("wrong permissions"),
-                    ErrorKind::NotADirectory => println!("this is not a dir"),
-                    _ => println!("idk this error"),
+                    ErrorKind::NotFound => eprintln!("directory not found"),
+                    ErrorKind::PermissionDenied => eprintln!("wrong permissions"),
+                    ErrorKind::NotADirectory => eprintln!("this is not a dir"),
+                    _ => eprintln!("could not change directory"),
                 }
 
                 return Err(e.into());
@@ -110,7 +195,12 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     let dir = env::current_dir()?;
-    let dst = compile_lang(dir.to_str().expect("current directory is not valid UTF-8"),None)?;
+
+    let dir_str = dir
+        .to_str()
+        .context("current directory is not valid UTF-8")?;
+
+    let dst = compile_lang(dir_str, cli.levels.as_ref())?;
 
     let output_base_path = dir.join(current_name);
 
@@ -122,9 +212,6 @@ fn main() -> Result<(), anyhow::Error> {
             .to_string_lossy()
     ));
 
-    // When spec-elf is run from the same directory where it will write the
-    // packed output, avoid truncating the running executable while it is still
-    // being copied by writing to a temporary sibling first.
     let pack_output_path = if same_path(&current_path, &output_path) {
         output_path.with_file_name(format!(
             "{}.tmp",
@@ -143,16 +230,12 @@ fn main() -> Result<(), anyhow::Error> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-
         fs::set_permissions(&output_path, fs::Permissions::from_mode(0o755))?;
     }
+
     Ok(())
 }
 
-/// Compare two paths after canonicalization when possible.
-///
-/// This keeps the self-overwrite check working even when paths are written in
-/// different forms, for example `./spec-elf` and `/home/user/project/spec-elf`.
 fn same_path(left: &Path, right: &Path) -> bool {
     match (left.canonicalize(), right.canonicalize()) {
         (Ok(left), Ok(right)) => left == right,
