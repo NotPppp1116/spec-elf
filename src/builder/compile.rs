@@ -62,8 +62,8 @@ pub fn compile_lang(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     match idiome {
         Idiomes::C => compile_c(path, flags),
         Idiomes::Cpp => compile_cpp(path, flags),
-        Idiomes::Rust => compile_rust(path),
-        Idiomes::Zig => compile_zig(path),
+        Idiomes::Rust => compile_rust(path,flags),
+        Idiomes::Zig => compile_zig(path,flags),
     }
 }
 
@@ -413,7 +413,15 @@ fn compile_zig(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     Ok(outputs)
 }
 
-pub fn compile_rust(path: &str) -> Result<Vec<String>> {
+const RUST_LEVELS: [(Levels, &str, &str); 5] = [
+    (Levels::NATIVE, "native", "-C target-cpu=native"),
+    (Levels::V1, "x86_64", "-C target-cpu=x86-64"),
+    (Levels::V2, "x86_64_v2", "-C target-cpu=x86-64-v2"),
+    (Levels::V3, "x86_64_v3", "-C target-cpu=x86-64-v3"),
+    (Levels::V4, "x86_64_v4", "-C target-cpu=x86-64-v4"),
+];
+
+pub fn compile_rust(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     let project_dir = find_cargo_project_dir(path)?;
     let build_dir = project_dir.join("build");
     fs::create_dir_all(&build_dir)?;
@@ -423,9 +431,31 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
     const TARGET_TRIPLE: &str = "x86_64-unknown-linux-gnu";
     const TARGET_RUSTFLAGS_ENV: &str = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS";
 
-    let mut outputs = Vec::with_capacity(RUST_MARCH_FLAGS.len());
+    let targets: Vec<(&str, &str)> = match flags {
+        Some(flags) => RUST_LEVELS
+            .iter()
+            .filter_map(|(level, name, rustflags)| {
+                if flags.contains(*level) {
+                    Some((*name, *rustflags))
+                } else {
+                    None
+                }
+            })
+            .collect(),
 
-    for (name, rustflags) in RUST_MARCH_FLAGS {
+        None => RUST_LEVELS
+            .iter()
+            .map(|(_, name, rustflags)| (*name, *rustflags))
+            .collect(),
+    };
+
+    if targets.is_empty() {
+        bail!("no Rust target levels selected");
+    }
+
+    let mut outputs = Vec::with_capacity(targets.len());
+
+    for (name, rustflags) in targets {
         let target_dir = project_dir.join("target").join(format!("rust-{name}"));
         let output = build_dir.join(format!("rust-{name}"));
 
@@ -460,7 +490,6 @@ pub fn compile_rust(path: &str) -> Result<Vec<String>> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-
             fs::set_permissions(&output, fs::Permissions::from_mode(0o755))?;
         }
 
