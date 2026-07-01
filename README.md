@@ -1,48 +1,84 @@
 # spec-elf
 
-`spec-elf` is an experimental launcher/packer for native executable projects.
+**One executable. Multiple CPU-specialized builds. Runtime selection.**
 
-It builds several versions of a project for different x86-64 CPU targets, packs those binaries behind a launcher, and later runs the payload that best matches the current machine.
+`spec-elf` is a native executable launcher and packer that builds a project several times for different x86-64 CPU targets, compresses those builds, packs them into one runnable file, and launches the best matching payload for the machine it is running on.
 
-The goal is simple: one packed executable that can carry multiple optimized builds.
+The idea is simple: instead of choosing between one generic binary or shipping a pile of separate optimized executables, `spec-elf` gives you a single file that can carry multiple optimized versions of the same program.
 
-> Experimental: the file format and runtime behavior are still changing. Do not use this for untrusted binaries or important production software yet.
+Run it once to pack a project. Run the packed file later, and it selects the right payload automatically.
 
-## What it does
+## The problem
 
-When you run `spec-elf` on a target project, it:
+When you distribute a native executable, you normally have to build for the oldest CPU level you want to support.
 
-1. detects the project language
-2. builds several optimized binaries for different CPU targets
-3. writes those binaries into the target project's `build/` directory
-4. appends the binaries to the `spec-elf` launcher
-5. writes a manifest and footer at the end of the launcher
-6. produces a packed executable in the target project directory
+For x86-64, that often means targeting a very conservative baseline. That baseline exists so the binary can run almost everywhere, including very old machines with weaker cores and fewer instruction-set features.
 
-When you run the packed executable, it:
+That portability has a cost. Newer CPUs can support better instructions, wider vector features, and stronger optimization targets, but a single generic binary usually cannot fully use them.
 
-1. opens its own executable file
-2. reads the footer and manifest
-3. detects the current CPU level
-4. extracts the best matching payload
-5. starts that payload
+The usual alternatives are not great:
 
-## Supported project types
+- ship one baseline binary and leave performance on the table
+- ship a `native` binary and limit who can run it
+- publish several binaries and make users choose the correct one
+- use shell scripts or install-time logic to dispatch between builds
 
-`spec-elf` currently detects the dominant language in the target directory by counting source-file extensions.
+`spec-elf` tackles that problem directly: keep the distribution model simple, but let the executable carry multiple optimized builds inside itself.
 
-| Language | Detection | Builder |
-| --- | --- | --- |
-| C | `.c`, `.h` | `gcc`, or CMake if `CMakeLists.txt` exists |
-| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hxx` | `g++`, or CMake if `CMakeLists.txt` exists |
-| Rust | `.rs` | `cargo build --release` with per-target `RUSTFLAGS` |
-| Zig | `.zig` | `zig build-exe -O ReleaseFast` |
+## What makes it interesting
 
-Generated payloads are written under the target project's `build/` directory.
+Most native projects ship a baseline executable because it is portable. That leaves performance on the table for newer CPUs.
+
+`spec-elf` takes a different approach:
+
+- build a baseline binary
+- build newer x86-64 level variants
+- build a native variant for the packing machine
+- compress all payloads
+- append them behind a normal launcher executable
+- select the best compatible build at runtime
+
+This makes CPU-specific builds much easier to distribute and test without needing wrapper scripts, install-time compilation, or separate downloads for every target.
+
+## Current status
+
+`spec-elf` is already usable for experimenting with real native projects.
+
+The core pipeline works:
+
+1. detect the project language
+2. build several optimized payloads
+3. pack them into one executable
+4. store a manifest and footer
+5. detect the current CPU at launch
+6. extract and run the best matching payload
+
+The format is still evolving, but the current project is not just a sketch. It already has a working build path, runtime path, CPU selection, compression, manifest/footer layout, and tests around the archive behavior.
+
+## Supported languages
+
+`spec-elf` currently supports projects written in:
+
+| Language | Build path |
+| --- | --- |
+| C | `gcc`, or CMake when `CMakeLists.txt` exists |
+| C++ | `g++`, or CMake when `CMakeLists.txt` exists |
+| Rust | `cargo build --release` with per-target CPU flags |
+| Zig | `zig build-exe -O ReleaseFast` |
+
+Language detection is automatic. `spec-elf` scans the target project and picks the dominant source language based on file extensions.
+
+Ignored directories include:
+
+```text
+target
+build
+.git
+```
 
 ## CPU targets
 
-For C and C++, `spec-elf` currently builds:
+For C and C++, `spec-elf` builds these variants:
 
 ```text
 -march=native
@@ -52,7 +88,7 @@ For C and C++, `spec-elf` currently builds:
 -march=x86-64-v4
 ```
 
-For Rust, it uses equivalent `target-cpu` values:
+For Rust, it uses matching `target-cpu` values:
 
 ```text
 native
@@ -62,7 +98,7 @@ x86-64-v3
 x86-64-v4
 ```
 
-For Zig, it uses equivalent `-mcpu` values:
+For Zig, it uses matching `-mcpu` values:
 
 ```text
 native
@@ -72,17 +108,46 @@ x86_64_v3
 x86_64_v4
 ```
 
-## Requirements
+## How packing works
 
-You need Rust installed to build `spec-elf` itself.
+A packed `spec-elf` executable keeps the launcher at the start of the file. That means the operating system can still execute it normally.
 
-Depending on the target project language, you may also need:
+After the launcher bytes, `spec-elf` appends compressed payloads, a manifest, and a fixed-size footer:
 
-- `gcc` for C projects
-- `g++` for C++ projects
-- `cmake` for C/C++ projects that use CMake
-- `cargo` for Rust projects
-- `zig` for Zig projects
+```text
+[launcher executable]
+[compressed payload 0]
+[compressed payload 1]
+[compressed payload 2]
+[...]
+[manifest]
+[footer]
+```
+
+The manifest stores the name, offset, and size of each payload.
+
+The footer lives at the very end of the file and points back to the manifest. This lets the launcher quickly detect whether it is running as a normal builder binary or as a packed executable.
+
+## Runtime selection
+
+When a packed executable starts, `spec-elf` opens its own file and reads the footer and manifest.
+
+It then selects a payload like this:
+
+1. If the packed file contains a `native` payload and the stored native CPU hash matches the current machine, use the native payload.
+2. Otherwise, detect the current x86-64 level.
+3. Select the payload matching the detected level.
+
+Supported runtime levels:
+
+```text
+x86-64
+x86-64-v2
+x86-64-v3
+x86-64-v4
+```
+
+The native hash includes CPU and platform information, so the `native` payload is only reused when it matches the machine it was built for. If it does not match, the launcher falls back to portable x86-64 level selection.
 
 ## Build spec-elf
 
@@ -92,7 +157,7 @@ From this repository:
 cargo build --release
 ```
 
-The launcher binary will be at:
+The launcher will be built at:
 
 ```text
 target/release/spec-elf
@@ -100,72 +165,134 @@ target/release/spec-elf
 
 ## Usage
 
-Run it from the project you want to pack:
+Pack the current project:
 
 ```bash
 /path/to/spec-elf
 ```
 
-Or pass the target directory explicitly:
+Or pack a specific project directory:
 
 ```bash
 /path/to/spec-elf --dir /path/to/project
 ```
 
-The packed output is written into the target project directory using the same file name as the launcher.
+The packed executable is written into the target project directory with a `.spec-elf` suffix.
 
-For example, if the launcher is named `spec-elf`, the output in the target directory will also be named `spec-elf`.
-
-## What the packed file contains
-
-The packed executable is laid out like this:
+For example, if the launcher is named:
 
 ```text
-[launcher executable bytes]
-[payload 0 bytes]
-[payload 1 bytes]
-[...]
-[manifest]
-[footer]
+spec-elf
 ```
 
-The launcher remains at the start of the file, so the operating system can still execute it normally.
-
-The footer is fixed-size and lives at the end of the file. It points back to the manifest, which describes the packed payloads.
-
-For the exact format, see [`docs/format.md`](docs/format.md).
-
-## Runtime payload selection
-
-When a packed executable starts, it prefers the `native` payload only when the stored native CPU hash matches the current machine.
-
-If the native hash does not match, it falls back to x86-64 level selection:
+the packed output will be:
 
 ```text
-x86-64
-x86-64-v2
-x86-64-v3
-x86-64-v4
+spec-elf.spec-elf
 ```
 
-The launcher expects the packed payload set to contain a compatible target.
+## Example flow
 
-## Safety notes
+```bash
+cargo build --release
 
-`spec-elf` is not a sandbox.
+cd /path/to/native/project
+/path/to/spec-elf
 
-Do not run packed executables from people you do not trust. A packed file contains native executable payloads, and the launcher will write and start one of them.
+./spec-elf.spec-elf
+```
+
+On launch, the packed file selects the best payload for the current CPU, extracts it, marks it executable on Unix systems, and starts it.
+
+## Requirements
+
+To build `spec-elf` itself:
+
+- Rust
+
+Depending on the project being packed:
+
+- `gcc` for C projects
+- `g++` for C++ projects
+- `cmake` for C/C++ projects that use CMake
+- `cargo` for Rust projects
+- `zig` for Zig projects
+
+## Project layout
+
+```text
+src/
+  main.rs              CLI, build/runtime mode selection
+  arch/
+    x86.rs             x86-64 level detection and native CPU hashing
+  archive/
+    format.rs          packed file writer/reader
+  builder/
+    compile.rs         C, C++, Rust, and Zig build logic
+
+docs/
+  format.md            packed executable format
+  builders.md          builder behavior
+```
+
+## Format overview
+
+The current footer contains:
+
+```text
+u8[8] magic
+u64   manifest_offset
+u64   manifest_size
+u64   native_hash
+u8    launch_flag
+```
+
+The current magic value is:
+
+```text
+VPKFOOT\0
+```
+
+The manifest contains one entry per payload:
+
+```text
+u32 entry_count
+
+repeated entry_count times:
+    u32 name_len
+    u8[name_len] name_utf8
+    u64 payload_offset
+    u64 payload_size
+```
+
+See [`docs/format.md`](docs/format.md) for more detail.
+
+## Current strengths
+
+- single-file distribution for multiple optimized native builds
+- automatic x86-64 CPU level selection
+- native payload fast path for the build machine
+- compressed payload storage with zstd
+- support for C, C++, Rust, and Zig projects
+- CMake support for C/C++ projects
+- simple append-only packed format
+- normal executable header remains intact
+- clear separation between builder mode and launcher mode
 
 ## Current limitations
 
-- x86-64-focused target selection only
-- experimental packed file format
-- no stable compatibility promise yet
-- simple language detection based on file extensions
+`spec-elf` is focused and intentionally small right now.
+
+Current limitations:
+
+- x86-64 only
+- Linux-focused Rust target path for Rust builds
 - no config file yet
-- manual C/C++ builds are intentionally basic
-- CMake projects that produce multiple executables may need explicit selection in the future
-- not a security sandbox
+- language detection is based on source extension counts
+- CMake projects that produce multiple executables need explicit target selection in the future
+- packed format is still allowed to evolve
+
+These are design and polish limitations, not blockers for the main idea. The core concept is already implemented and useful.
 
 ## Developer checks
 
@@ -178,9 +305,29 @@ cargo test
 cargo build --release
 ```
 
-The archive reader/writer code is a good fuzzing target because it parses offsets, sizes, names, and footer fields from a file.
+The archive reader/writer is especially important to test because it handles offsets, sizes, names, compressed payloads, and footer fields.
 
-## More documentation
+## Roadmap
+
+Good next steps:
+
+- add explicit CLI flags for language selection
+- add explicit CLI flags for executable target selection
+- add a project config file
+- improve fallback behavior when an exact payload is missing
+- support more target families
+- make runtime extraction cleaner
+- improve docs with real project examples
+- add fuzzing for archive parsing
+- add more tests around payload selection and corrupted archives
+
+## Safety model
+
+`spec-elf` is a launcher and packer, not a sandbox.
+
+A packed file contains native executable payloads. Only run packed executables from sources you trust, exactly as you would with any other native binary.
+
+## Documentation
 
 - [`docs/format.md`](docs/format.md): packed executable layout
 - [`docs/builders.md`](docs/builders.md): builder behavior for C, C++, Rust, and Zig
