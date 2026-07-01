@@ -1,12 +1,12 @@
 # spec-elf
 
-**One executable. Multiple CPU-specialized builds. Runtime selection.**
+**One executable. Multiple CPU-specialized builds. First-launch specialization.**
 
-`spec-elf` is a native executable launcher and packer that builds a project several times for different x86-64 CPU targets, compresses those builds, packs them into one runnable file, and launches the best matching payload for the machine it is running on.
+`spec-elf` is a native executable launcher and packer that builds a project several times for different x86-64 CPU targets, compresses those builds, and packs them into one runnable file.
 
-The idea is simple: instead of choosing between one generic binary or shipping a pile of separate optimized executables, `spec-elf` gives you a single file that can carry multiple optimized versions of the same program.
+The packed file is not meant to be a permanent runtime dispatch layer. Its job is to specialize itself for the machine it is launched on: choose the best matching payload, materialize that optimized executable, and start it.
 
-Run it once to pack a project. Run the packed file later, and it selects the right payload automatically.
+The end goal is simple: distribute one file, but run code that was built for the CPU in front of it.
 
 ## The problem
 
@@ -36,9 +36,10 @@ Most native projects ship a baseline executable because it is portable. That lea
 - build a native variant for the packing machine
 - compress all payloads
 - append them behind a normal launcher executable
-- select the best compatible build at runtime
+- use the launcher as a specialization step
+- materialize the best compatible payload as a normal optimized executable
 
-This makes CPU-specific builds much easier to distribute and test without needing wrapper scripts, install-time compilation, or separate downloads for every target.
+This makes CPU-specific builds much easier to distribute and test without needing users to manually pick from several downloads.
 
 ## Current status
 
@@ -50,10 +51,10 @@ The core pipeline works:
 2. build several optimized payloads
 3. pack them into one executable
 4. store a manifest and footer
-5. detect the current CPU at launch
-6. extract and run the best matching payload
+5. detect the current CPU on launch
+6. extract and start the best matching payload
 
-The format is still evolving, but the current project is not just a sketch. It already has a working build path, runtime path, CPU selection, compression, manifest/footer layout, and tests around the archive behavior.
+The format is still evolving, but the current project is not just a sketch. It already has a working build path, specialization path, CPU selection, compression, manifest/footer layout, and tests around the archive behavior.
 
 ## Supported languages
 
@@ -128,7 +129,7 @@ The manifest stores the name, offset, and size of each payload.
 
 The footer lives at the very end of the file and points back to the manifest. This lets the launcher quickly detect whether it is running as a normal builder binary or as a packed executable.
 
-## Runtime selection
+## First-launch specialization
 
 When a packed executable starts, `spec-elf` opens its own file and reads the footer and manifest.
 
@@ -138,7 +139,7 @@ It then selects a payload like this:
 2. Otherwise, detect the current x86-64 level.
 3. Select the payload matching the detected level.
 
-Supported runtime levels:
+Supported levels:
 
 ```text
 x86-64
@@ -146,6 +147,10 @@ x86-64-v2
 x86-64-v3
 x86-64-v4
 ```
+
+After choosing the payload, the launcher decompresses that payload, writes it out as an executable, marks it executable on Unix systems, and starts it.
+
+That materialized executable is just the selected optimized program. It does not need the packed archive, the other CPU variants, or the `spec-elf` selection path.
 
 The native hash includes CPU and platform information, so the `native` payload is only reused when it matches the machine it was built for. If it does not match, the launcher falls back to portable x86-64 level selection.
 
@@ -202,7 +207,7 @@ cd /path/to/native/project
 ./spec-elf.spec-elf
 ```
 
-On launch, the packed file selects the best payload for the current CPU, extracts it, marks it executable on Unix systems, and starts it.
+On launch, the packed file chooses the best payload for the current CPU, materializes the selected optimized executable, and starts it.
 
 ## Requirements
 
@@ -270,14 +275,14 @@ See [`docs/format.md`](docs/format.md) for more detail.
 ## Current strengths
 
 - single-file distribution for multiple optimized native builds
-- automatic x86-64 CPU level selection
+- first-launch CPU specialization instead of permanent user-facing dispatch
 - native payload fast path for the build machine
 - compressed payload storage with zstd
 - support for C, C++, Rust, and Zig projects
 - CMake support for C/C++ projects
 - simple append-only packed format
 - normal executable header remains intact
-- clear separation between builder mode and launcher mode
+- clear separation between builder mode and packed-launcher mode
 
 ## Current limitations
 
@@ -289,6 +294,7 @@ Current limitations:
 - Linux-focused Rust target path for Rust builds
 - no config file yet
 - language detection is based on source extension counts
+- first-launch materialization still needs polish around exact output/replace behavior
 - CMake projects that produce multiple executables need explicit target selection in the future
 - packed format is still allowed to evolve
 
@@ -315,8 +321,8 @@ Good next steps:
 - add explicit CLI flags for executable target selection
 - add a project config file
 - improve fallback behavior when an exact payload is missing
+- make first-launch specialization atomic and cleaner
 - support more target families
-- make runtime extraction cleaner
 - improve docs with real project examples
 - add fuzzing for archive parsing
 - add more tests around payload selection and corrupted archives
