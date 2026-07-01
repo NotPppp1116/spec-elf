@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use bitflags::Flags;
 use std::{
-    collections::HashMap,
+    collections::{self, HashMap},
     fs::{self, read_dir},
     path::{Path, PathBuf},
     process::Command,
@@ -61,7 +61,7 @@ pub fn compile_lang(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
 
     match idiome {
         Idiomes::C => compile_c(path, flags),
-        Idiomes::Cpp => compile_cpp(path,flags),
+        Idiomes::Cpp => compile_cpp(path, flags),
         Idiomes::Rust => compile_rust(path),
         Idiomes::Zig => compile_zig(path),
     }
@@ -338,7 +338,7 @@ fn compile_cpp(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     Ok(outputs)
 }
 
-fn compile_zig(path: &str) -> Result<Vec<String>> {
+fn compile_zig(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     let project_dir = project_dir_from_path(path)?;
     let build_dir = project_dir.join("build");
     fs::create_dir_all(&build_dir)?;
@@ -349,30 +349,66 @@ fn compile_zig(path: &str) -> Result<Vec<String>> {
         find_first_source(&project_dir, &["zig"])?
     };
 
-    let mut outputs = Vec::with_capacity(ZIG_MARCH_FLAGS.len());
+    const ZIG_LEVELS: [(Levels, &str); 5] = [
+        (Levels::NATIVE, "-mcpu=native"),
+        (Levels::V1, "-mcpu=x86_64"),
+        (Levels::V2, "-mcpu=x86_64_v2"),
+        (Levels::V3, "-mcpu=x86_64_v3"),
+        (Levels::V4, "-mcpu=x86_64_v4"),
+    ];
 
-    for march in ZIG_MARCH_FLAGS {
-        let name = march.trim_start_matches("-mcpu=");
-        let output = build_dir.join(format!("zig-{name}"));
-        let emit = format!("-femit-bin={}", output.display());
+    let marches: Vec<&str> = match flags {
+        Some(flags) => ZIG_LEVELS
+            .iter()
+            .filter_map(|(level, march)| {
+                if flags.contains(*level) {
+                    Some(*march)
+                } else {
+                    None
+                }
+            })
+            .collect(),
 
-        let status = Command::new("zig")
-            .arg("build-exe")
-            .arg(&source)
-            .arg("-O")
-            .arg("ReleaseFast")
-            .arg(march)
-            .arg(&emit)
-            .current_dir(&project_dir)
-            .status()
-            .with_context(|| format!("could not run zig for {name}"))?;
+        None => ZIG_LEVELS
+            .iter()
+            .map(|(_, march)| *march)
+            .collect(),
+    };
 
-        if !status.success() {
-            bail!("zig failed for {name} with status {status}");
+    if marches.is_empty() {
+        bail!("no Zig target levels selected");
+    }
+
+    let mut outputs = Vec::with_capacity(marches.len());
+
+    let mut build_zig = |marches: &[&str], outputs: &mut Vec<String>| -> Result<()> {
+        for &march in marches {
+            let name = march.trim_start_matches("-mcpu=");
+            let output = build_dir.join(format!("zig-{name}"));
+            let emit = format!("-femit-bin={}", output.display());
+
+            let status = Command::new("zig")
+                .arg("build-exe")
+                .arg(&source)
+                .arg("-O")
+                .arg("ReleaseFast")
+                .arg(march)
+                .arg(&emit)
+                .current_dir(&project_dir)
+                .status()
+                .with_context(|| format!("could not run zig for {name}"))?;
+
+            if !status.success() {
+                bail!("zig failed for {name} with status {status}");
+            }
+
+            outputs.push(output.display().to_string());
         }
 
-        outputs.push(output.display().to_string());
-    }
+        Ok(())
+    };
+
+    build_zig(&marches, &mut outputs)?;
 
     Ok(outputs)
 }
