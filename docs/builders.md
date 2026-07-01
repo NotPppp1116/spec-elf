@@ -27,6 +27,19 @@ Current extension mapping:
 
 The language with the highest count is selected.
 
+By default, builders produce every supported CPU target. The CLI can narrow that set with `-ct`:
+
+```text
+base
+v1
+v2
+v3
+v4
+native
+```
+
+`base` and `v1` both mean the x86-64 baseline target. The selected target set applies to C, C++, Rust, and Zig builders.
+
 ## C projects
 
 If the project has a `CMakeLists.txt`, `spec-elf` uses CMake.
@@ -80,7 +93,7 @@ Rust projects are built with Cargo.
 
 For each CPU target, `spec-elf` sets:
 
-- `RUSTFLAGS`
+- `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS`
 - `CARGO_TARGET_DIR`
 
 This keeps the target builds separate.

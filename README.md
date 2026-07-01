@@ -148,9 +148,9 @@ x86-64-v3
 x86-64-v4
 ```
 
-After choosing the payload, the launcher decompresses that payload, writes it out as an executable, marks it executable on Unix systems, and starts it.
+After choosing the payload, the launcher decompresses that payload, writes it to a temporary sibling path, marks it executable on Unix systems, and atomically renames it over the packed archive. It then starts the replacement executable with the original command-line arguments.
 
-That materialized executable is just the selected optimized program. It does not need the packed archive, the other CPU variants, or the `spec-elf` selection path.
+That replacement executable is just the selected optimized program. It does not need the packed archive, the other CPU variants, or the `spec-elf` selection path. Subsequent launches of the same path run the optimized program directly.
 
 The native hash includes CPU and platform information, so the `native` payload is only reused when it matches the machine it was built for. If it does not match, the launcher falls back to portable x86-64 level selection.
 
@@ -183,6 +183,13 @@ Or pack a specific project directory:
 ```
 
 The packed executable is written into the target project directory with a `.spec-elf` suffix.
+
+Build only selected CPU targets with `-ct`:
+
+```bash
+/path/to/spec-elf -ct base v2 v3
+/path/to/spec-elf --dir /path/to/project -ct native
+```
 
 For example, if the launcher is named:
 

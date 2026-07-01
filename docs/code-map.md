@@ -14,9 +14,9 @@ This document is a quick guide for people reading the `spec-elf` source for the 
 At startup it asks `is_archive(current_exe)`:
 
 - `false`: build payload binaries, pack them, and write the packed launcher into the target project directory
-- `true`: read the packed payload list, choose the best binary for the current machine, write it to disk, and spawn it
+- `true`: read the packed payload list, choose the best binary for the current machine, replace the packed file with that payload, and start the replacement
 
-The `--dir <path>` argument only changes the target project directory before language detection starts.
+The `--dir <path>` argument changes the target project directory before language detection starts. The `-ct <levels...>` argument narrows which CPU target payloads are built.
 
 ## Archive format
 
@@ -76,6 +76,8 @@ Supported builders:
 
 The builder writes final payloads into the target project's `build/` directory.
 
+By default, all supported CPU levels are built. `-ct` can select a subset such as `base v2 v3` or `native`.
+
 ## CPU detection
 
 `src/arch/x86.rs` contains CPU feature detection.
@@ -91,5 +93,7 @@ The archive tests in `src/archive/format.rs` use temporary files to test the rea
 - a normal file is not detected as an archive
 - a packed file is detected as an archive
 - a packed file can be read back into the selected payload bytes
+- self-replacement writes the selected payload back to the executable path
+- CLI target-level parsing accepts valid selections and rejects empty `-ct`
 
 These tests are useful because the file format depends on real offsets, seeks, and byte sizes.

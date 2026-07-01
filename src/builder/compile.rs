@@ -1,11 +1,11 @@
 use anyhow::{Context, Result, bail};
-use bitflags::Flags;
 use std::{
-    collections::{self, HashMap},
+    collections::HashMap,
     fs::{self, read_dir},
     path::{Path, PathBuf},
     process::Command,
 };
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Levels: u8 {
@@ -16,36 +16,13 @@ bitflags::bitflags! {
         const NATIVE = 1 << 4;
     }
 }
+
 const C_LEVELS: [(Levels, &str); 5] = [
     (Levels::NATIVE, "-march=native"),
     (Levels::V1, "-march=x86-64"),
     (Levels::V2, "-march=x86-64-v2"),
     (Levels::V3, "-march=x86-64-v3"),
     (Levels::V4, "-march=x86-64-v4"),
-];
-
-pub const MARCH_FLAGS: [&str; 5] = [
-    "-march=native",
-    "-march=x86-64",
-    "-march=x86-64-v2",
-    "-march=x86-64-v3",
-    "-march=x86-64-v4",
-];
-
-pub const ZIG_MARCH_FLAGS: [&str; 5] = [
-    "-mcpu=native",
-    "-mcpu=x86_64",
-    "-mcpu=x86_64_v2",
-    "-mcpu=x86_64_v3",
-    "-mcpu=x86_64_v4",
-];
-
-pub const RUST_MARCH_FLAGS: [(&str, &str); 5] = [
-    ("native", "-C target-cpu=native"),
-    ("x86_64", "-C target-cpu=x86-64"),
-    ("x86_64_v2", "-C target-cpu=x86-64-v2"),
-    ("x86_64_v3", "-C target-cpu=x86-64-v3"),
-    ("x86_64_v4", "-C target-cpu=x86-64-v4"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,7 +110,7 @@ fn compile_c(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
 
     let has_cmake = project_dir.join("CMakeLists.txt").exists();
 
-    let marches: Vec<&str> = fileter_flags(flags);
+    let marches = filter_c_flags(flags);
     if marches.is_empty() {
         bail!("no C target levels selected");
     }
@@ -239,13 +216,14 @@ fn compile_cpp(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
 
     let has_cmake = project_dir.join("CMakeLists.txt").is_file();
 
-    let marches = fileter_flags(flags);
+    let marches = filter_c_flags(flags);
     if marches.is_empty() {
         bail!("no cpp targets selected");
     }
-    let mut outputs = Vec::with_capacity(MARCH_FLAGS.len());
 
-    for march in MARCH_FLAGS {
+    let mut outputs = Vec::with_capacity(marches.len());
+
+    for march in marches {
         let march_name = march.trim_start_matches("-march=");
         let output = build_dir.join(format!("cpp-{march_name}"));
 
@@ -378,34 +356,28 @@ fn compile_zig(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
 
     let mut outputs = Vec::with_capacity(marches.len());
 
-    let mut build_zig = |marches: &[&str], outputs: &mut Vec<String>| -> Result<()> {
-        for &march in marches {
-            let name = march.trim_start_matches("-mcpu=");
-            let output = build_dir.join(format!("zig-{name}"));
-            let emit = format!("-femit-bin={}", output.display());
+    for march in marches {
+        let name = march.trim_start_matches("-mcpu=");
+        let output = build_dir.join(format!("zig-{name}"));
+        let emit = format!("-femit-bin={}", output.display());
 
-            let status = Command::new("zig")
-                .arg("build-exe")
-                .arg(&source)
-                .arg("-O")
-                .arg("ReleaseFast")
-                .arg(march)
-                .arg(&emit)
-                .current_dir(&project_dir)
-                .status()
-                .with_context(|| format!("could not run zig for {name}"))?;
+        let status = Command::new("zig")
+            .arg("build-exe")
+            .arg(&source)
+            .arg("-O")
+            .arg("ReleaseFast")
+            .arg(march)
+            .arg(&emit)
+            .current_dir(&project_dir)
+            .status()
+            .with_context(|| format!("could not run zig for {name}"))?;
 
-            if !status.success() {
-                bail!("zig failed for {name} with status {status}");
-            }
-
-            outputs.push(output.display().to_string());
+        if !status.success() {
+            bail!("zig failed for {name} with status {status}");
         }
 
-        Ok(())
-    };
-
-    build_zig(&marches, &mut outputs)?;
+        outputs.push(output.display().to_string());
+    }
 
     Ok(outputs)
 }
@@ -622,8 +594,8 @@ fn find_first_source(project_dir: &Path, extensions: &[&str]) -> Result<PathBuf>
         .next()
         .context("could not find source file")
 }
-fn fileter_flags(flags: Option<&Levels>) -> Vec<&str> {
-    let marches: Vec<&str> = match flags {
+fn filter_c_flags(flags: Option<&Levels>) -> Vec<&'static str> {
+    match flags {
         Some(flags) => C_LEVELS
             .iter()
             .filter_map(|(level, march)| {
@@ -636,6 +608,34 @@ fn fileter_flags(flags: Option<&Levels>) -> Vec<&str> {
             .collect(),
 
         None => C_LEVELS.iter().map(|(_, march)| *march).collect(),
-    };
-    marches
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_c_flags_defaults_to_every_level() {
+        assert_eq!(
+            filter_c_flags(None),
+            vec![
+                "-march=native",
+                "-march=x86-64",
+                "-march=x86-64-v2",
+                "-march=x86-64-v3",
+                "-march=x86-64-v4",
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_c_flags_keeps_only_selected_levels() {
+        let levels = Levels::V2 | Levels::V4;
+
+        assert_eq!(
+            filter_c_flags(Some(&levels)),
+            vec!["-march=x86-64-v2", "-march=x86-64-v4"]
+        );
+    }
 }

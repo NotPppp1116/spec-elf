@@ -26,6 +26,8 @@ The launcher remains at the start of the file, so the operating system can still
 
 At runtime, the launcher opens its own executable, reads the footer from the end, then uses the footer to find the manifest and payload byte ranges.
 
+After selecting and decompressing the best payload, the launcher specializes the file path it was started from: it writes the payload to a temporary sibling file, marks it executable on Unix systems, renames it over the packed archive, and starts the replacement with the original command-line arguments.
+
 ## Manifest layout
 
 All integer fields are little-endian.
@@ -121,6 +123,8 @@ The reader must reject:
 - files where `manifest_offset + manifest_size` points outside the payload/manifest area
 - invalid UTF-8 payload names
 - missing compatible payloads
+
+The runtime self-replacement path must write the temporary file beside the archive so the final rename stays on the same filesystem.
 
 ## Stability
 

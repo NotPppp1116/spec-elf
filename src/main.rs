@@ -3,8 +3,10 @@ use crate::builder::compile::{Levels, compile_lang};
 
 use anyhow::{Context, Result, bail};
 use std::{
-    env, fs,
-    io::ErrorKind,
+    env,
+    ffi::OsString,
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -142,6 +144,15 @@ fn parse_args(args: &[String]) -> Result<CliAction> {
 }
 
 fn main() -> Result<()> {
+    let current_path = env::current_exe()?;
+    let current_name = current_path
+        .file_name()
+        .expect("current executable has no file name");
+
+    if is_archive(&current_path)? {
+        return specialize_self(&current_path);
+    }
+
     let args: Vec<String> = env::args().collect();
 
     let action = parse_args(&args).unwrap_or_else(|e| usage_error(&e.to_string()));
@@ -155,35 +166,8 @@ fn main() -> Result<()> {
         unreachable!();
     };
 
-    let current_path = env::current_exe()?;
-    let current_name = current_path
-        .file_name()
-        .expect("current executable has no file name");
-
-    if is_archive(&current_path)? {
-        let correct_exe = read_back(&current_path)?;
-    
-        let temp_name = format!(
-            ".spec-elf-{}-{}",
-            std::process::id(),
-            current_name.to_string_lossy()
-        );
-    
-        let final_file_path = env::temp_dir().join(temp_name);
-    
-        fs::write(&final_file_path, correct_exe)?;
-    
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&final_file_path, fs::Permissions::from_mode(0o755))?;
-        }
-    
-        Command::new(&final_file_path)
-            .spawn()
-            .with_context(|| format!("failed to launch {}", final_file_path.display()))?;
-    
-        return Ok(());
+    if current_name.is_empty() {
+        bail!("current executable has an empty file name");
     }
 
     if let Some(target_dir) = &cli.target_dir {
@@ -244,9 +228,163 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn specialize_self(current_path: &Path) -> Result<()> {
+    let app_args: Vec<OsString> = env::args_os().skip(1).collect();
+    let correct_exe = read_back(current_path)?;
+
+    replace_current_executable(current_path, &correct_exe)
+        .with_context(|| format!("failed to replace {}", current_path.display()))?;
+
+    launch_replacement(current_path, &app_args)
+}
+
+fn replace_current_executable(current_path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = current_path
+        .parent()
+        .context("current executable has no parent directory")?;
+    let name = current_path
+        .file_name()
+        .context("current executable has no file name")?
+        .to_string_lossy();
+    let temp_path = write_replacement_temp(parent, &name, bytes)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("failed to chmod {}", temp_path.display()))?;
+    }
+
+    if let Err(err) = fs::rename(&temp_path, current_path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(err).with_context(|| {
+            format!(
+                "failed to rename {} over {}",
+                temp_path.display(),
+                current_path.display()
+            )
+        });
+    }
+
+    Ok(())
+}
+
+fn write_replacement_temp(parent: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf> {
+    for attempt in 0..100 {
+        let temp_path = parent.join(format!(
+            ".spec-elf-replace-{}-{attempt}-{name}",
+            std::process::id()
+        ));
+
+        let mut file = match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to create {}", temp_path.display()));
+            }
+        };
+
+        if let Err(error) = file.write_all(bytes) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error).with_context(|| format!("failed to write {}", temp_path.display()));
+        }
+
+        return Ok(temp_path);
+    }
+
+    bail!(
+        "could not create replacement temp file in {}",
+        parent.display()
+    )
+}
+
+#[cfg(unix)]
+fn launch_replacement(path: &Path, args: &[OsString]) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    Err(Command::new(path).args(args).exec())
+        .with_context(|| format!("failed to launch {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn launch_replacement(path: &Path, args: &[OsString]) -> Result<()> {
+    let status = Command::new(path)
+        .args(args)
+        .status()
+        .with_context(|| format!("failed to launch {}", path.display()))?;
+
+    match status.code() {
+        Some(code) => std::process::exit(code),
+        None => Ok(()),
+    }
+}
+
 fn same_path(left: &Path, right: &Path) -> bool {
     match (left.canonicalize(), right.canonicalize()) {
         (Ok(left), Ok(right)) => left == right,
         _ => left == right,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn parse_args_accepts_dir_and_target_levels() {
+        let action = parse_args(&args(&["spec-elf", "--dir", "demo", "-ct", "base", "v3"]))
+            .expect("valid args");
+
+        let CliAction::Build(cli) = action else {
+            panic!("expected build action");
+        };
+
+        assert_eq!(cli.target_dir, Some(PathBuf::from("demo")));
+
+        let levels = cli.levels.expect("levels should be selected");
+        assert!(levels.contains(Levels::V1));
+        assert!(levels.contains(Levels::V3));
+        assert!(!levels.contains(Levels::V2));
+    }
+
+    #[test]
+    fn parse_args_rejects_empty_target_levels() {
+        let error = match parse_args(&args(&["spec-elf", "-ct"])) {
+            Ok(_) => panic!("expected invalid args"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.to_string(), "-ct requires at least one target level");
+    }
+
+    #[test]
+    fn replace_current_executable_replaces_path_contents() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let exe = dir.path().join("packed-app");
+
+        fs::write(&exe, b"archive bytes")?;
+
+        replace_current_executable(&exe, b"selected payload")?;
+
+        assert_eq!(fs::read(&exe)?, b"selected payload");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = fs::metadata(&exe)?.permissions().mode();
+            assert_ne!(mode & 0o111, 0);
+        }
+
+        Ok(())
     }
 }
