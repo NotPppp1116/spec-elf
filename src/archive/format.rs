@@ -33,6 +33,11 @@ struct Entry {
     size: u64,
 }
 
+const COMPAT_X86_64: [X86Level; 1] = [X86Level::X86_64];
+const COMPAT_V2: [X86Level; 2] = [X86Level::V2, X86Level::X86_64];
+const COMPAT_V3: [X86Level; 3] = [X86Level::V3, X86Level::V2, X86Level::X86_64];
+const COMPAT_V4: [X86Level; 4] = [X86Level::V4, X86Level::V3, X86Level::V2, X86Level::X86_64];
+
 /// Read a little-endian `u32` from the current file position.
 fn read_u32(file: &mut File) -> io::Result<u32> {
     let mut buf = [0u8; 4];
@@ -248,29 +253,56 @@ fn find_optimal(entries: &[Entry], native_hash: &[u8]) -> io::Result<(u64, u64)>
         }
     }
 
-    let wanted = match level {
-        X86Level::V4 => "x86-64-v4",
-        X86Level::V3 => "x86-64-v3",
-        X86Level::V2 => "x86-64-v2",
-        X86Level::X86_64 => "x86-64",
-    };
-    let wanted_with_underscores = wanted.replace('-', "_");
-
-    for entry in entries {
-        if entry.name == wanted
-            || entry.name.ends_with(wanted)
-            || entry.name == wanted_with_underscores
-            || entry.name.ends_with(&wanted_with_underscores)
-            || entry.name == format!("-march={wanted}")
-        {
-            return Ok((entry.offset, entry.size));
-        }
+    if let Some(entry) = find_best_portable(entries, level) {
+        return Ok((entry.offset, entry.size));
     }
 
     Err(io::Error::new(
         io::ErrorKind::NotFound,
         "no compatible binary found",
     ))
+}
+
+fn find_best_portable(entries: &[Entry], current_level: X86Level) -> Option<&Entry> {
+    for level in compatible_levels(current_level) {
+        if let Some(entry) = entries
+            .iter()
+            .find(|entry| entry_matches_level(entry, *level))
+        {
+            return Some(entry);
+        }
+    }
+
+    None
+}
+
+fn compatible_levels(current_level: X86Level) -> &'static [X86Level] {
+    match current_level {
+        X86Level::X86_64 => &COMPAT_X86_64,
+        X86Level::V2 => &COMPAT_V2,
+        X86Level::V3 => &COMPAT_V3,
+        X86Level::V4 => &COMPAT_V4,
+    }
+}
+
+fn entry_matches_level(entry: &Entry, level: X86Level) -> bool {
+    let (dash_name, underscore_name) = level_names(level);
+
+    entry.name == dash_name
+        || entry.name.ends_with(dash_name)
+        || entry.name == underscore_name
+        || entry.name.ends_with(underscore_name)
+        || entry.name.strip_prefix("-march=") == Some(dash_name)
+        || entry.name.strip_prefix("-mcpu=") == Some(underscore_name)
+}
+
+fn level_names(level: X86Level) -> (&'static str, &'static str) {
+    match level {
+        X86Level::V4 => ("x86-64-v4", "x86_64_v4"),
+        X86Level::V3 => ("x86-64-v3", "x86_64_v3"),
+        X86Level::V2 => ("x86-64-v2", "x86_64_v2"),
+        X86Level::X86_64 => ("x86-64", "x86_64"),
+    }
 }
 
 /// Return whether a file looks like a launchable spec-elf archive.
@@ -313,6 +345,14 @@ mod tests {
     use crate::arch::x86::{X86Level, detect_x86_level, native_hasher};
     use std::fs;
 
+    fn entry(name: &str, offset: u64) -> Entry {
+        Entry {
+            name: name.to_string(),
+            offset,
+            size: 1,
+        }
+    }
+
     #[test]
     fn normal_file_is_not_archive() -> io::Result<()> {
         let dir = tempfile::tempdir()?;
@@ -323,6 +363,37 @@ mod tests {
         assert!(!is_archive(&file)?);
 
         Ok(())
+    }
+
+    #[test]
+    fn fallback_uses_best_lower_compatible_level() {
+        let entries = vec![
+            entry("c-x86-64", 1),
+            entry("c-x86-64-v2", 2),
+            entry("c-x86-64-v3", 3),
+        ];
+
+        let selected = find_best_portable(&entries, X86Level::V4).expect("compatible payload");
+
+        assert_eq!(selected.offset, 3);
+    }
+
+    #[test]
+    fn fallback_never_uses_higher_incompatible_level() {
+        let entries = vec![entry("c-x86-64", 1), entry("c-x86-64-v4", 4)];
+
+        let selected = find_best_portable(&entries, X86Level::V3).expect("compatible payload");
+
+        assert_eq!(selected.offset, 1);
+    }
+
+    #[test]
+    fn fallback_accepts_underscore_level_names() {
+        let entries = vec![entry("rust-x86_64", 1), entry("rust-x86_64_v2", 2)];
+
+        let selected = find_best_portable(&entries, X86Level::V3).expect("compatible payload");
+
+        assert_eq!(selected.offset, 2);
     }
 
     #[test]

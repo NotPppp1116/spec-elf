@@ -50,7 +50,7 @@ Payload selection is handled by `find_optimal` in `src/archive/format.rs`.
 Selection order:
 
 1. If the stored native CPU hash matches the current machine, use a payload whose name contains `native`.
-2. Otherwise, detect the current x86-64 level and search for a matching payload name.
+2. Otherwise, detect the current x86-64 level and search downward for the best compatible portable payload.
 
 Current x86-64 levels:
 
@@ -62,6 +62,8 @@ x86-64-v4
 ```
 
 Rust and Zig payload names use underscores in some places, so the matcher accepts both dash and underscore variants.
+
+The portable fallback never chooses a payload above the detected CPU level.
 
 ## Builders
 
@@ -93,6 +95,7 @@ The archive tests in `src/archive/format.rs` use temporary files to test the rea
 - a normal file is not detected as an archive
 - a packed file is detected as an archive
 - a packed file can be read back into the selected payload bytes
+- portable fallback chooses the best lower compatible x86-64 payload
 - self-replacement writes the selected payload back to the executable path
 - CLI target-level parsing accepts valid selections and rejects empty `-ct`
 

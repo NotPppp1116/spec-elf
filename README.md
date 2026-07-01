@@ -137,7 +137,7 @@ It then selects a payload like this:
 
 1. If the packed file contains a `native` payload and the stored native CPU hash matches the current machine, use the native payload.
 2. Otherwise, detect the current x86-64 level.
-3. Select the payload matching the detected level.
+3. Select the best available portable payload at or below the detected level.
 
 Supported levels:
 
@@ -153,6 +153,8 @@ After choosing the payload, the launcher decompresses that payload, writes it to
 That replacement executable is just the selected optimized program. It does not need the packed archive, the other CPU variants, or the `spec-elf` selection path. Subsequent launches of the same path run the optimized program directly.
 
 The native hash includes CPU and platform information, so the `native` payload is only reused when it matches the machine it was built for. If it does not match, the launcher falls back to portable x86-64 level selection.
+
+Portable fallback never chooses a higher CPU level than the current machine supports. For example, an x86-64-v4 machine can use v4, v3, v2, or baseline payloads, in that order; an x86-64-v3 machine will not use a v4 payload.
 
 ## Build spec-elf
 
@@ -301,7 +303,6 @@ Current limitations:
 - Linux-focused Rust target path for Rust builds
 - no config file yet
 - language detection is based on source extension counts
-- first-launch materialization still needs polish around exact output/replace behavior
 - CMake projects that produce multiple executables need explicit target selection in the future
 - packed format is still allowed to evolve
 
@@ -318,6 +319,8 @@ cargo test
 cargo build --release
 ```
 
+GitHub CI runs formatting, clippy, and tests on pushes and pull requests.
+
 The archive reader/writer is especially important to test because it handles offsets, sizes, names, compressed payloads, and footer fields.
 
 ## Roadmap
@@ -327,8 +330,6 @@ Good next steps:
 - add explicit CLI flags for language selection
 - add explicit CLI flags for executable target selection
 - add a project config file
-- improve fallback behavior when an exact payload is missing
-- make first-launch specialization atomic and cleaner
 - support more target families
 - improve docs with real project examples
 - add fuzzing for archive parsing

@@ -82,7 +82,7 @@ When packing, `spec-elf` computes a hash from CPU and target-platform informatio
 
 When launching, it recomputes that hash. If the stored hash matches and a payload name contains `native`, that payload is selected.
 
-If the hash does not match, `spec-elf` falls back to x86-64 level selection.
+If the hash does not match, `spec-elf` falls back to portable x86-64 level selection.
 
 ## x86-64 payload selection
 
@@ -95,7 +95,7 @@ x86-64-v3
 x86-64-v4
 ```
 
-It then searches the manifest for a payload whose name matches or ends with the detected level.
+It then searches the manifest for the best available compatible payload. Selection starts at the detected level and walks downward to baseline, so a v4-capable machine can use v4, then v3, then v2, then baseline. It never walks upward into a payload that may require unsupported CPU features.
 
 Examples of names that can match:
 

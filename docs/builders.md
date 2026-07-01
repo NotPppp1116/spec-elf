@@ -141,5 +141,4 @@ Useful next improvements:
 - add explicit CLI flags for language selection
 - add explicit CLI flags for the executable target name
 - add a config file instead of relying only on extension counting
-- add fallback target selection when the exact x86-64 level payload is missing
 - add tests around payload naming and selection
