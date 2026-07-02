@@ -12,6 +12,7 @@ use std::{
 mod arch;
 mod archive;
 mod builder;
+mod other_commands;
 
 struct Cli {
     target_dir: Option<PathBuf>,
@@ -21,6 +22,7 @@ struct Cli {
 enum CliAction {
     Help,
     Build(Cli),
+    Inspect,
 }
 
 fn usage() -> &'static str {
@@ -89,6 +91,18 @@ fn parse_args(args: &[String]) -> Result<CliAction> {
 
         if is_help_flag(arg) {
             bail!("help flags do not take extra arguments");
+        }
+
+        if is_inspect_arg(arg) {
+            i += 1;
+            let Some(dir) = args.get(i) else {
+                bail!("inspect command needs to be followed by a path");
+            };
+            if dir.starts_with('-') {
+                bail!("inspect requires a path")
+            }
+
+            return Ok(CliAction::Inspect);
         }
 
         if is_dir_flag(arg) {
@@ -162,27 +176,27 @@ fn main() -> Result<()> {
 
     if is_archive(&current_path)? {
         let correct_exe = read_back(&current_path)?;
-    
+
         let temp_name = format!(
             ".spec-elf-{}-{}",
             std::process::id(),
             current_name.to_string_lossy()
         );
-    
+
         let final_file_path = env::temp_dir().join(temp_name);
-    
+
         fs::write(&final_file_path, correct_exe)?;
-    
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&final_file_path, fs::Permissions::from_mode(0o755))?;
         }
-    
+
         Command::new(&final_file_path)
             .spawn()
             .with_context(|| format!("failed to launch {}", final_file_path.display()))?;
-    
+
         return Ok(());
     }
 
@@ -249,4 +263,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
         (Ok(left), Ok(right)) => left == right,
         _ => left == right,
     }
+}
+fn is_inspect_arg(arg: &str) -> bool {
+    arg == "inspect"
 }
