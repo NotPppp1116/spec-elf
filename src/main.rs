@@ -1,5 +1,6 @@
 use crate::archive::format::{is_archive, pack_files, read_back};
 use crate::builder::compile::{Levels, compile_lang};
+use crate::toml::config::check_config;
 
 use anyhow::{Context, Result, bail};
 use std::{
@@ -25,8 +26,11 @@ enum CliAction {
     Help,
     Build(Cli),
 }
-
-fn usage() -> &'static str {
+enum Mode {
+    Normal,
+    Configed,
+}
+const fn usage() -> &'static str {
     "usage: spec-elf [--dir <target-dir>] [-ct <levels...>]
 
 Run with no arguments from the target project directory, or pass --dir followed by the target project directory.
@@ -145,6 +149,8 @@ fn parse_args(args: &[String]) -> Result<CliAction> {
 }
 
 fn main() -> Result<()> {
+    let mut mode = Mode::Normal;
+
     let current_path = env::current_exe()?;
     let current_name = current_path
         .file_name()
@@ -155,6 +161,11 @@ fn main() -> Result<()> {
     }
 
     let args: Vec<String> = env::args().collect();
+
+    if args.is_empty() && check_config()? {
+        mode = Mode::Configed;
+        
+    }
 
     let action = parse_args(&args).unwrap_or_else(|e| usage_error(&e.to_string()));
 

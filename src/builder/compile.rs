@@ -97,7 +97,7 @@ fn count_languages_recursive(dir: &Path, counts: &mut HashMap<Idiomes, usize>) -
     Ok(())
 }
 
-fn compile_c(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
+pub  fn compile_c(path: &str, flags: Option<&Levels>) -> Result<Vec<String>> {
     let project_dir = project_dir_from_path(path)?;
     let build_dir = project_dir.join("build");
     fs::create_dir_all(&build_dir)?;
