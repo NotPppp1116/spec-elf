@@ -188,7 +188,7 @@ where
     let entry_count = read_u32(&mut file)?;
 
     // Each manifest entry stores the payload name and its byte range.
-    let mut entries = Vec::with_capacity(entry_count as usize);
+    let mut entries = Vec::new();
 
     for _ in 0..entry_count {
         let name_len = read_u32(&mut file)? as usize;
