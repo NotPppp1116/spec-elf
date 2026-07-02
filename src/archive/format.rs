@@ -9,7 +9,7 @@ use std::{
 ///
 /// Because the footer is written last, this lets the launcher quickly check
 /// whether the current executable is a packed spec-elf archive.
-const FOOTER_MAGIC: &[u8; 8] = b"VPKFOOT\0";
+pub const FOOTER_MAGIC: &[u8; 8] = b"VPKFOOT\0";
 
 /// Fixed footer size in bytes:
 ///
@@ -18,7 +18,7 @@ const FOOTER_MAGIC: &[u8; 8] = b"VPKFOOT\0";
 /// - 8 bytes manifest size
 /// - 8 bytes native CPU hash
 /// - 1 byte launch flag
-const FOOTER_SIZE: u64 = 33;
+pub const FOOTER_SIZE: u64 = 33;
 
 /// Footer flag that marks the file as a launchable archive.
 const IS_LAUNCHED: u8 = 1;
@@ -188,7 +188,7 @@ where
     let entry_count = read_u32(&mut file)?;
 
     // Each manifest entry stores the payload name and its byte range.
-    let mut entries = Vec::with_capacity(entry_count as usize);
+    let mut entries = Vec::new();
 
     for _ in 0..entry_count {
         let name_len = read_u32(&mut file)? as usize;

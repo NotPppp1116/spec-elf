@@ -1,1 +1,27 @@
 /target
+
+# Fuzzing runtime output
+/fuzz/out/
+/fuzz/out-*/
+/fuzz/generated/
+/fuzz/min/
+/fuzz/**/.cur_input
+/fuzz/**/fastresume.bin
+/fuzz/**/fuzz_bitmap
+/fuzz/**/fuzzer_stats
+/fuzz/**/plot_data
+/fuzz/**/cmdline
+/fuzz/**/fuzzer_setup
+/fuzz/**/target_hash
+/fuzz/**/queue/
+/fuzz/**/crashes/
+/fuzz/**/hangs/
+
+# Core dumps
+/core
+/core.*
+*.core
+
+# Generated packed binaries
+*.spec-elf
+/spec-elf.spec-elf
