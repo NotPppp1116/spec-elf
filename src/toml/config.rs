@@ -21,14 +21,18 @@ struct Config {
     artifact: Option<String>,
 }
 
-impl Config {
+trait Loading: Sized{
+    fn load(project_dir:&Path)->Result<Option<Self>>;
+}
+
+impl Loading for Config {
     //loads the config
     fn load(project_dir: &Path) -> Result<Option<Self>> {
         let config_path = project_dir.join("spec-elf.toml");
 
         if !config_path.is_file() {
             return Ok(None);
-        }
+               }
 
         let mut file = OpenOptions::new()
             .read(true)
@@ -47,3 +51,4 @@ impl Config {
     }
     
 }
+
